@@ -1,0 +1,48 @@
+local action_id_back = hash("back")
+local action_id_esc = hash("esc")
+
+local function store_reset_data(self)
+	if score > highscore then
+		highscore = score
+	end
+	coin_saved = coin_saved + coin_collected
+	score = 0 -- reset score
+	coin_collected = 0 -- reset coin
+end
+
+local function generate_new_coin(self)
+	local coin_pos = vmath.vector3()
+	coin_pos.x = math.random(10, 470)
+	coin_pos.y = math.random(30, 740)
+	coin_pos.z = 0.11
+	factory.create("/go_game#coin_factory",coin_pos)
+end
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	generate_new_coin(self)
+	msg.post(".", "loop_coin_per_sec")
+end
+
+function on_message(self, message_id, message, sender)
+	-- from coin.script
+	if message_id == hash("generate_coin") then
+		generate_new_coin(self)
+	end
+	-- from this script
+	if message_id == hash("loop_coin_per_sec") then
+		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 1, 0, function()
+			msg.post("/go_game#game", "score_update")
+			msg.post(".", "loop_coin_per_sec")
+		end)
+	end
+end
+
+function on_input(self, action_id, action)
+	if (action_id == action_id_esc or action_id == action_id_back) and action.pressed then
+		msg.post(".", "release_input_focus")
+		msg.post("/go_rocket", "release_input_focus")
+		msg.post("loader:/go_loader#script", "goto_menu")
+		store_reset_data(self)
+	end
+end

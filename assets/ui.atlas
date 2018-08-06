@@ -1,0 +1,9 @@
+images {
+  image: "/assets/app_icons/icon_120.png"
+}
+images {
+  image: "/assets/app_icons/icon_48.png"
+}
+margin: 2
+extrude_borders: 0
+inner_padding: 0

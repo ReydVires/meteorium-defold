@@ -1,0 +1,6 @@
+images {
+  image: "/assets/sprites/bg_game.png"
+}
+margin: 2
+extrude_borders: 0
+inner_padding: 0

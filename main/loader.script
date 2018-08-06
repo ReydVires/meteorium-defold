@@ -1,0 +1,56 @@
+--GLOBAL VARIABLE
+highscore = 0
+score = 0
+coin_saved = 0
+coin_collected = 0
+
+local PROX = "#proxy_"
+
+local function load_menu(self)
+	msg.post(PROX.."menu", "load")
+end
+
+local function enable_menu(self, enable)
+	if enable then
+		msg.post(PROX.."menu", "enable")
+		msg.post("menu:/go_menu", "acquire_input_focus")
+	else
+		msg.post(PROX.."menu", "disable")
+	end
+	print("menu is enable?",enable)
+end
+
+local function load_game(self)
+	msg.post(PROX.."game", "load")
+end
+
+local function unload_game(self)
+	msg.post(PROX.."game", "unload")
+end
+
+function init(self)
+	-- to make sure generate random number
+	math.randomseed(socket.gettime())
+	msg.post(".", "acquire_input_focus")
+	load_menu(self)
+end
+
+function on_message(self, message_id, message, sender)
+	-- from menu.gui_script
+	if message_id == hash("goto_game") then
+		enable_menu(self, false)
+		load_game(self)
+	-- from game.script
+	elseif message_id == hash("goto_menu") then
+		unload_game(self)
+		enable_menu(self, true)
+	elseif message_id == hash("proxy_loaded") then
+		msg.post(sender, "init")
+		msg.post(sender, "enable")
+		print(sender, "is activated")
+	end
+	if message_id == hash("proxy_unloaded") then
+		-- this unload can be used to restart game
+		print(sender, "is unloaded")
+	end
+end

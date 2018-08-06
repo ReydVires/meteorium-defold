@@ -1,0 +1,18 @@
+function init(self)
+	self.score_text = gui.get_node("score_text")
+	self.coin_text = gui.get_node("coin_text")
+	gui.set_text(self.score_text, score)
+	gui.set_text(self.coin_text, coin_collected)
+end
+
+function on_message(self, message_id, message, sender)
+	-- from coin.script
+	if message_id == hash("coin_update") then
+		gui.set_text(self.coin_text, coin_collected)
+	end
+	-- from game.script
+	if message_id == hash("score_update") then
+		score = score + 1
+		gui.set_text(self.score_text, score)
+	end
+end

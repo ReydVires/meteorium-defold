@@ -1,0 +1,9 @@
+images {
+  image: "/assets/sprites/p_tambah.png"
+}
+images {
+  image: "/assets/sprites/Star.png"
+}
+margin: 2
+extrude_borders: 0
+inner_padding: 0

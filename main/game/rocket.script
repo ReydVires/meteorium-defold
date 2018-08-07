@@ -27,13 +27,18 @@ end
 
 local function rocket_move(self, action_id, action)
 	if self.game_start and action_id == action_id_touch then
+		if action.pressed then
+			particlefx.play("#fire_trail")
+		end
 		set_pos(self, action)
 		set_rot(self, action)
 		if action.released then
 			print "do slide"
+			particlefx.stop("#fire_trail")
 		end
 	elseif not self.game_start and action_id == action_id_touch and action.pressed then
 		self.game_start = true
+		particlefx.play("#fire_trail")
 	end
 end
 
@@ -53,6 +58,7 @@ function on_message(self, message_id, message, sender)
 		end
 		if message.group == hash("meteor") and not self.is_destroy then
 			print "rocket damaged!"
+			particlefx.stop("#fire_trail")
 			self.is_destroy = true
 			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")

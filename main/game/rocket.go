@@ -13,6 +13,21 @@ components {
     w: 1.0
   }
 }
+components {
+  id: "fire_trail"
+  component: "/main/game/fire_trail.particlefx"
+  position {
+    x: -16.0
+    y: 0.0
+    z: 0.0
+  }
+  rotation {
+    x: 0.0
+    y: 0.0
+    z: 0.70710677
+    w: 0.70710677
+  }
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

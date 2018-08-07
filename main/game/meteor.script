@@ -7,17 +7,24 @@ local function set_angle(self)
 		math.pi / 2,
 		math.pi / 4,
 		math.pi * 2,
-		-math.pi / 4,
-		-math.pi / 2,
-		-math.pi / 1.5
+		math.pi / -4,
+		math.pi / -2,
+		math.pi / -1.5
 	}
 	local angle = math.random(1, #tab_angle)
 	go.set_rotation(vmath.quat_rotation_z(tab_angle[angle]))
 end
 
 local function moving(self, dt)
-	self.pos.x = self.pos.x + self.speed * dt
-	self.pos.y = self.pos.y - self.speed * dt
+	if self.pick_from == "left" then
+		self.pos.x = self.pos.x + self.speed * dt
+	elseif self.pick_from == "top" then
+		self.pos.y = self.pos.y - self.speed * dt
+	elseif self.pick_from == "right" then
+		self.pos.x = self.pos.x - self.speed * dt
+	elseif self.pick_from == "bot" then
+		self.pos.y = self.pos.y + self.speed * dt
+	end
 	go.set_position(self.pos)
 end
 
@@ -30,7 +37,7 @@ local function destroy_area(self)
 end
 
 function init(self)
-	print "meteor created"
+	--print "meteor created"
 	self.pos = go.get_position()
 	self.rot = go.get_rotation()
 	set_angle(self)
@@ -39,4 +46,11 @@ end
 function update(self, dt)
 	moving(self, dt)
 	destroy_area(self)
+end
+
+function on_message(self, message_id, message, sender)
+	-- from game.script
+	if message_id == hash("set_move_dir") then
+		self.pick_from = message.spawn_from
+	end
 end

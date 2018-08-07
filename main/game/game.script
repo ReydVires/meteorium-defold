@@ -1,6 +1,6 @@
 local action_id_back = hash("back")
 local action_id_esc = hash("esc")
-local TIME_BASE = 0.7
+local TIME_BASE = 0.65
 local TIME_SPAWN = 0.5
 
 local function store_reset_data(self)
@@ -22,17 +22,27 @@ end
 
 local function generate_new_meteor(self)
 	local meteor_pos = vmath.vector3()
-	local based_on = { "x", "y" }
-	local pick_base = based_on[math.random(1,2)]
-	if pick_base == "x" then
-		meteor_pos.x = math.random(40, 400)
-		meteor_pos.y = 800
-	elseif pick_base == "y" then
-		meteor_pos.y = math.random(250, 670)
-		meteor_pos.x = 0
+	local call_from = { "right", "left", "top", "bot" }
+	local pick_from = call_from[math.random(1, #call_from)]
+	local rand_pos_y = math.random(30, 770)
+	local rand_pos_x = math.random(30, 450)
+	if pick_from == "right" then
+		meteor_pos.x = 490
+		meteor_pos.y = rand_pos_y
+	elseif pick_from == "left" then
+		meteor_pos.x = -10
+		meteor_pos.y = rand_pos_y
+	elseif pick_from == "top" then
+		meteor_pos.y = 810
+		meteor_pos.x = rand_pos_x
+	elseif pick_from == "bot" then
+		meteor_pos.y = -10
+		meteor_pos.x = rand_pos_x
 	end
 	meteor_pos.z = 0.2
-	factory.create("/go_game#meteor_factory", meteor_pos)
+	
+	local instance_meteor = factory.create("/go_game#meteor_factory", meteor_pos)
+	msg.post(instance_meteor, "set_move_dir", {spawn_from = pick_from})
 end
 
 function init(self)
@@ -43,6 +53,10 @@ function init(self)
 end
 
 function on_message(self, message_id, message, sender)
+	-- from rocket.script
+	if message_id == hash("game_end") then
+		self.game_end = true
+	end
 	-- from coin.script, this script
 	if message_id == hash("generate_coin") then
 		generate_new_coin(self)
@@ -55,7 +69,7 @@ function on_message(self, message_id, message, sender)
 		end)
 	end
 	-- from this script
-	if message_id == hash("loop_score_per_sec") then
+	if message_id == hash("loop_score_per_sec") and not self.game_end then
 		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, message.base, function()
 			msg.post("/go_game#game", "score_update")
 			msg.post(".", "loop_score_per_sec", {base = TIME_BASE})

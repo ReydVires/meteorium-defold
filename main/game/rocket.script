@@ -39,7 +39,6 @@ end
 
 function init(self)
 	msg.post(".", "acquire_input_focus")
-	print "rocket created"
 	self.game_start = false
 	self.pos = go.get_position()
 	self.rot = go.get_rotation()
@@ -55,6 +54,7 @@ function on_message(self, message_id, message, sender)
 		if message.group == hash("meteor") and not self.is_destroy then
 			print "rocket damaged!"
 			self.is_destroy = true
+			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")
 			sprite.set_constant("/go_rocket#sprite", "tint", vmath.vector4(1, 1, 1, 0.5))
 		end

@@ -7,7 +7,7 @@ local function set_pos(self, action)
 	-- implement some smooth movement because lerp effect
 	if math.abs(action.x - self.pos.x) < 120 and math.abs(action.y - self.pos.y) < 150 and
 	not self.speed_change then
-		self.speed = self.speed * 1.6
+		self.speed = self.speed * 1.7
 		self.speed_change = true
 	else
 		self.speed = self.actual_speed
@@ -52,8 +52,11 @@ function on_message(self, message_id, message, sender)
 			msg.post(message.other_id, "get_coin")
 			--pprint(message)
 		end
-		if message.group == hash("meteor") then
+		if message.group == hash("meteor") and not self.is_destroy then
 			print "rocket damaged!"
+			self.is_destroy = true
+			msg.post(".", "release_input_focus")
+			sprite.set_constant("/go_rocket#sprite", "tint", vmath.vector4(1, 1, 1, 0.5))
 		end
 	end
 end

@@ -1,5 +1,7 @@
 local action_id_back = hash("back")
 local action_id_esc = hash("esc")
+local TIME_BASE = 0.7
+local TIME_SPAWN = 0.5
 
 local function store_reset_data(self)
 	if score > highscore then
@@ -12,28 +14,51 @@ end
 
 local function generate_new_coin(self)
 	local coin_pos = vmath.vector3()
-	coin_pos.x = math.random(10, 470)
-	coin_pos.y = math.random(30, 740)
+	coin_pos.x = math.random(50, 430)
+	coin_pos.y = math.random(70, 720)
 	coin_pos.z = 0.11
-	factory.create("/go_game#coin_factory",coin_pos)
+	factory.create("/go_game#coin_factory", coin_pos)
+end
+
+local function generate_new_meteor(self)
+	local meteor_pos = vmath.vector3()
+	local based_on = { "x", "y" }
+	local pick_base = based_on[math.random(1,2)]
+	if pick_base == "x" then
+		meteor_pos.x = math.random(40, 400)
+		meteor_pos.y = 800
+	elseif pick_base == "y" then
+		meteor_pos.y = math.random(250, 670)
+		meteor_pos.x = 0
+	end
+	meteor_pos.z = 0.2
+	factory.create("/go_game#meteor_factory", meteor_pos)
 end
 
 function init(self)
 	msg.post(".", "acquire_input_focus")
-	generate_new_coin(self)
-	msg.post(".", "loop_coin_per_sec")
+	msg.post(".", "generate_coin")
+	msg.post(".", "generate_meteor")
+	msg.post(".", "loop_score_per_sec", {base = TIME_BASE})
 end
 
 function on_message(self, message_id, message, sender)
-	-- from coin.script
+	-- from coin.script, this script
 	if message_id == hash("generate_coin") then
 		generate_new_coin(self)
 	end
 	-- from this script
-	if message_id == hash("loop_coin_per_sec") then
-		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 1, 0, function()
+	if message_id == hash("generate_meteor") then
+		generate_new_meteor(self)
+		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, TIME_SPAWN, function()
+			msg.post(".", "generate_meteor")
+		end)
+	end
+	-- from this script
+	if message_id == hash("loop_score_per_sec") then
+		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, message.base, function()
 			msg.post("/go_game#game", "score_update")
-			msg.post(".", "loop_coin_per_sec")
+			msg.post(".", "loop_score_per_sec", {base = TIME_BASE})
 		end)
 	end
 end

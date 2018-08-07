@@ -1,0 +1,12 @@
+images {
+  image: "/assets/sprites/ikon_roket.png"
+}
+images {
+  image: "/assets/sprites/koin.png"
+}
+images {
+  image: "/assets/sprites/ikon_asteroid.png"
+}
+margin: 2
+extrude_borders: 0
+inner_padding: 0

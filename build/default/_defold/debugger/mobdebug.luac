@@ -1,2265 +1,0 @@
-
-ı≠
-€¨--
--- MobDebug -- Lua remote debugger
--- Copyright 2011-15 Paul Kulchenko
--- Based on RemDebug 1.0 Copyright Kepler Project 2005
---
-
--- use loaded modules or load explicitly on those systems that require that
-local require = require
---local io = io or require "io"
---local table = table or require "table"
---local string = string or require "string"
---local coroutine = coroutine or require "coroutine"
---local debug = require "debug"
--- protect require "os" as it may fail on embedded systems without os module
-local os = os or (function(module)
-  local ok, res = pcall(require, module)
-  return ok and res or nil
-end)("os")
-
-local mobdebug = {
-  _NAME = "mobdebug",
-  _VERSION = "0.70",
-  _COPYRIGHT = "Paul Kulchenko",
-  _DESCRIPTION = "Mobile Remote Debugger for the Lua programming language",
-  port = os and os.getenv and tonumber((os.getenv("MOBDEBUG_PORT"))) or 8172,
-  checkcount = 200,
-  yieldtimeout = 0.02, -- yield timeout (s)
-  connecttimeout = 2, -- connect timeout (s)
-}
-
-local HOOKMASK = "lcr"
-local error = error
-local getfenv = getfenv
-local setfenv = setfenv
-local loadstring = loadstring or load -- "load" replaced "loadstring" in Lua 5.2
-local pairs = pairs
-local setmetatable = setmetatable
-local tonumber = tonumber
-local unpack = table.unpack or unpack
-local rawget = rawget
-local gsub, sub, find = string.gsub, string.sub, string.find
-
--- if strict.lua is used, then need to avoid referencing some global
--- variables, as they can be undefined;
--- use rawget to avoid complaints from strict.lua at run-time.
--- it's safe to do the initialization here as all these variables
--- should get defined values (if any) before the debugging starts.
--- there is also global 'wx' variable, which is checked as part of
--- the debug loop as 'wx' can be loaded at any time during debugging.
-local genv = _G or _ENV
-local jit = rawget(genv, "jit")
-local MOAICoroutine = rawget(genv, "MOAICoroutine")
-
--- ngx_lua debugging requires a special handling as its coroutine.*
--- methods use a different mechanism that doesn't allow resume calls
--- from debug hook handlers.
--- Instead, the "original" coroutine.* methods are used.
--- `rawget` needs to be used to protect against `strict` checks, but
--- ngx_lua hides those in a metatable, so need to use that.
-local metagindex = getmetatable(genv) and getmetatable(genv).__index
-local ngx = type(metagindex) == "table" and metagindex.rawget and metagindex:rawget("ngx") or nil
-local corocreate = ngx and coroutine._create or coroutine.create
-local cororesume = ngx and coroutine._resume or coroutine.resume
-local coroyield = ngx and coroutine._yield or coroutine.yield
-local corostatus = ngx and coroutine._status or coroutine.status
-local corowrap = coroutine.wrap
-
-if not setfenv then -- Lua 5.2+
-  -- based on http://lua-users.org/lists/lua-l/2010-06/msg00314.html
-  -- this assumes f is a function
-  local function findenv(f)
-    local level = 1
-    repeat
-      local name, value = debug.getupvalue(f, level)
-      if name == '_ENV' then return level, value end
-      level = level + 1
-    until name == nil
-    return nil end
-  getfenv = function (f) return(select(2, findenv(f)) or _G) end
-  setfenv = function (f, t)
-    local level = findenv(f)
-    if level then debug.setupvalue(f, level, t) end
-    return f end
-end
-
--- check for OS and convert file names to lower case on windows
--- (its file system is case insensitive, but case preserving), as setting a
--- breakpoint on x:\Foo.lua will not work if the file was loaded as X:\foo.lua.
--- OSX and Windows behave the same way (case insensitive, but case preserving).
--- OSX can be configured to be case-sensitive, so check for that. This doesn't
--- handle the case of different partitions having different case-sensitivity.
-local win = os and os.getenv and (os.getenv('WINDIR') or (os.getenv('OS') or ''):match('[Ww]indows')) and true or false
-local mac = not win and (os and os.getenv and os.getenv('DYLD_LIBRARY_PATH') or not io.open("/proc")) and true or false
-local iscasepreserving = win or (mac and io.open('/library') ~= nil)
-
--- turn jit off based on Mike Pall's comment in this discussion:
--- http://www.freelists.org/post/luajit/Debug-hooks-and-JIT,2
--- "You need to turn it off at the start if you plan to receive
--- reliable hook calls at any later point in time."
-if jit and jit.off then jit.off() end
-
-local socket = require "builtins.scripts.socket"
-local coro_debugger
-local coro_debugee
-local coroutines = {}; setmetatable(coroutines, {__mode = "k"}) -- "weak" keys
-local events = { BREAK = 1, WATCH = 2, RESTART = 3, STACK = 4 }
-local breakpoints = {}
-local watches = {}
-local lastsource
-local lastfile
-local watchescnt = 0
-local abort -- default value is nil; this is used in start/loop distinction
-local seen_hook = false
-local checkcount = 0
-local step_into = false
-local step_over = false
-local step_level = 0
-local stack_level = 0
-local server
-local buf
-local outputs = {}
-local iobase = {print = print}
-local basedir = ""
-local deferror = "execution aborted at default debugee"
-local debugee = function ()
-  local a = 1
-  for _ = 1, 10 do a = a + 1 end
-  error(deferror)
-end
-local function q(s) return string.gsub(s, '([%(%)%.%%%+%-%*%?%[%^%$%]])','%%%1') end
-
-local serpent = (function() ---- include Serpent module for serialization
-local n, v = "serpent", "0.30" -- (C) 2012-17 Paul Kulchenko; MIT License
-local c, d = "Paul Kulchenko", "Lua serializer and pretty printer"
-local snum = {[tostring(1/0)]='1/0 --[[math.huge]]',[tostring(-1/0)]='-1/0 --[[-math.huge]]',[tostring(0/0)]='0/0'}
-local badtype = {thread = true, userdata = true, cdata = true}
-local getmetatable = debug and debug.getmetatable or getmetatable
-local pairs = function(t) return next, t end -- avoid using __pairs in Lua 5.2+
-local keyword, globals, G = {}, {}, (_G or _ENV)
-for _,k in ipairs({'and', 'break', 'do', 'else', 'elseif', 'end', 'false',
-  'for', 'function', 'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat',
-  'return', 'then', 'true', 'until', 'while'}) do keyword[k] = true end
-for k,v in pairs(G) do globals[v] = k end -- build func to name mapping
-for _,g in ipairs({'coroutine', 'debug', 'io', 'math', 'string', 'table', 'os'}) do
-  for k,v in pairs(type(G[g]) == 'table' and G[g] or {}) do globals[v] = g..'.'..k end end
-
-local function s(t, opts)
-  local name, indent, fatal, maxnum = opts.name, opts.indent, opts.fatal, opts.maxnum
-  local sparse, custom, huge = opts.sparse, opts.custom, not opts.nohuge
-  local space, maxl = (opts.compact and '' or ' '), (opts.maxlevel or math.huge)
-  local maxlen, metatostring = tonumber(opts.maxlength), opts.metatostring
-  local iname, comm = '_'..(name or ''), opts.comment and (tonumber(opts.comment) or math.huge)
-  local numformat = opts.numformat or "%.17g"
-  local seen, sref, syms, symn = {}, {'local '..iname..'={}'}, {}, 0
-  local function gensym(val) return '_'..(tostring(tostring(val)):gsub("[^%w]",""):gsub("(%d%w+)",
-    -- tostring(val) is needed because __tostring may return a non-string value
-    function(s) if not syms[s] then symn = symn+1; syms[s] = symn end return tostring(syms[s]) end)) end
-  local function safestr(s) return type(s) == "number" and tostring(huge and snum[tostring(s)] or numformat:format(s))
-    or type(s) ~= "string" and tostring(s) -- escape NEWLINE/010 and EOF/026
-    or ("%q"):format(s):gsub("\010","n"):gsub("\026","\\026") end
-  local function comment(s,l) return comm and (l or 0) < comm and ' --[['..select(2, pcall(tostring, s))..']]' or '' end
-  local function globerr(s,l) return globals[s] and globals[s]..comment(s,l) or not fatal
-    and safestr(select(2, pcall(tostring, s))) or error("Can't serialize "..tostring(s)) end
-  local function safename(path, name) -- generates foo.bar, foo[3], or foo['b a r']
-    local n = name == nil and '' or name
-    local plain = type(n) == "string" and n:match("^[%l%u_][%w_]*$") and not keyword[n]
-    local safe = plain and n or '['..safestr(n)..']'
-    return (path or '')..(plain and path and '.' or '')..safe, safe end
-  local alphanumsort = type(opts.sortkeys) == 'function' and opts.sortkeys or function(k, o, n) -- k=keys, o=originaltable, n=padding
-    local maxn, to = tonumber(n) or 12, {number = 'a', string = 'b'}
-    local function padnum(d) return ("%0"..tostring(maxn).."d"):format(tonumber(d)) end
-    table.sort(k, function(a,b)
-      -- sort numeric keys first: k[key] is not nil for numerical keys
-      return (k[a] ~= nil and 0 or to[type(a)] or 'z')..(tostring(a):gsub("%d+",padnum))
-           < (k[b] ~= nil and 0 or to[type(b)] or 'z')..(tostring(b):gsub("%d+",padnum)) end) end
-  local function val2str(t, name, indent, insref, path, plainindex, level)
-    local ttype, level, mt = type(t), (level or 0), getmetatable(t)
-    local spath, sname = safename(path, name)
-    local tag = plainindex and
-      ((type(name) == "number") and '' or name..space..'='..space) or
-      (name ~= nil and sname..space..'='..space or '')
-    if seen[t] then -- already seen this element
-      sref[#sref+1] = spath..space..'='..space..seen[t]
-      return tag..'nil'..comment('ref', level) end
-    -- protect from those cases where __tostring may fail
-    if type(mt) == 'table' then
-      local to, tr = pcall(function() return mt.__tostring(t) end)
-      local so, sr = pcall(function() return mt.__serialize(t) end)
-      if (opts.metatostring ~= false and to or so) then -- knows how to serialize itself
-        seen[t] = insref or spath
-        t = so and sr or tr
-        ttype = type(t)
-      end -- new value falls through to be serialized
-    end
-    if ttype == "table" then
-      if level >= maxl then return tag..'{}'..comment('maxlvl', level) end
-      seen[t] = insref or spath
-      if next(t) == nil then return tag..'{}'..comment(t, level) end -- table empty
-      if maxlen and maxlen < 0 then return tag..'{}'..comment('maxlen', level) end
-      local maxn, o, out = math.min(#t, maxnum or #t), {}, {}
-      for key = 1, maxn do o[key] = key end
-      if not maxnum or #o < maxnum then
-        local n = #o -- n = n + 1; o[n] is much faster than o[#o+1] on large tables
-        for key in pairs(t) do if o[key] ~= key then n = n + 1; o[n] = key end end end
-      if maxnum and #o > maxnum then o[maxnum+1] = nil end
-      if opts.sortkeys and #o > maxn then alphanumsort(o, t, opts.sortkeys) end
-      local sparse = sparse and #o > maxn -- disable sparsness if only numeric keys (shorter output)
-      for n, key in ipairs(o) do
-        local value, ktype, plainindex = t[key], type(key), n <= maxn and not sparse
-        if opts.valignore and opts.valignore[value] -- skip ignored values; do nothing
-        or opts.keyallow and not opts.keyallow[key]
-        or opts.keyignore and opts.keyignore[key]
-        or opts.valtypeignore and opts.valtypeignore[type(value)] -- skipping ignored value types
-        or sparse and value == nil then -- skipping nils; do nothing
-        elseif ktype == 'table' or ktype == 'function' or badtype[ktype] then
-          if not seen[key] and not globals[key] then
-            sref[#sref+1] = 'placeholder'
-            local sname = safename(iname, gensym(key)) -- iname is table for local variables
-            sref[#sref] = val2str(key,sname,indent,sname,iname,true) end
-          sref[#sref+1] = 'placeholder'
-          local path = seen[t]..'['..tostring(seen[key] or globals[key] or gensym(key))..']'
-          sref[#sref] = path..space..'='..space..tostring(seen[value] or val2str(value,nil,indent,path))
-        else
-          out[#out+1] = val2str(value,key,indent,insref,seen[t],plainindex,level+1)
-          if maxlen then
-            maxlen = maxlen - #out[#out]
-            if maxlen < 0 then break end
-          end
-        end
-      end
-      local prefix = string.rep(indent or '', level)
-      local head = indent and '{\n'..prefix..indent or '{'
-      local body = table.concat(out, ','..(indent and '\n'..prefix..indent or space))
-      local tail = indent and "\n"..prefix..'}' or '}'
-      return (custom and custom(tag,head,body,tail,level) or tag..head..body..tail)..comment(t, level)
-    elseif badtype[ttype] then
-      seen[t] = insref or spath
-      return tag..globerr(t, level)
-    elseif ttype == 'function' then
-      seen[t] = insref or spath
-      if opts.nocode then return tag.."function() --[[..skipped..]] end"..comment(t, level) end
-      local ok, res = pcall(string.dump, t)
-      local func = ok and "((loadstring or load)("..safestr(res)..",'@serialized'))"..comment(t, level)
-      return tag..(func or globerr(t, level))
-    else return tag..safestr(t) end -- handle all other types
-  end
-  local sepr = indent and "\n" or ";"..space
-  local body = val2str(t, name, indent) -- this call also populates sref
-  local tail = #sref>1 and table.concat(sref, sepr)..sepr or ''
-  local warn = opts.comment and #sref>1 and space.."--[[incomplete output with shared/self-references skipped]]" or ''
-  return not name and body..warn or "do local "..body..sepr..tail.."return "..name..sepr.."end"
-end
-
-local function deserialize(data, opts)
-  local env = (opts and opts.safe == false) and G
-    or setmetatable({}, {
-        __index = function(t,k) return t end,
-        __call = function(t,...) error("cannot call functions") end
-      })
-  local f, res = (loadstring or load)('return '..data, nil, nil, env)
-  if not f then f, res = (loadstring or load)(data, nil, nil, env) end
-  if not f then return f, res end
-  if setfenv then setfenv(f, env) end
-  return pcall(f)
-end
-
-local function merge(a, b) if b then for k,v in pairs(b) do a[k] = v end end; return a; end
-return { _NAME = n, _COPYRIGHT = c, _DESCRIPTION = d, _VERSION = v, serialize = s,
-  load = deserialize,
-  dump = function(a, opts) return s(a, merge({name = '_', compact = true, sparse = true}, opts)) end,
-  line = function(a, opts) return s(a, merge({sortkeys = true, comment = true}, opts)) end,
-  block = function(a, opts) return s(a, merge({indent = '  ', sortkeys = true, comment = true}, opts)) end }
-end)() ---- end of Serpent module
-
-mobdebug.line = serpent.line
-mobdebug.dump = serpent.dump
-mobdebug.linemap = nil
-mobdebug.loadstring = loadstring
-
-local function removebasedir(path, basedir)
-  if iscasepreserving then
-    -- check if the lowercased path matches the basedir
-    -- if so, return substring of the original path (to not lowercase it)
-    return path:lower():find('^'..q(basedir:lower()))
-      and path:sub(#basedir+1) or path
-  else
-    return string.gsub(path, '^'..q(basedir), '')
-  end
-end
-
-local function stack(start)
-  local function vars(f)
-    local func = debug.getinfo(f, "f").func
-    local i = 1
-    local locals = {}
-    -- get locals
-    while true do
-      local name, value = debug.getlocal(f, i)
-      if not name then break end
-      if string.sub(name, 1, 1) ~= '(' then
-        locals[name] = {value, select(2,pcall(tostring,value))}
-      end
-      i = i + 1
-    end
-    -- get varargs (these use negative indices)
-    i = 1
-    while true do
-      local name, value = debug.getlocal(f, -i)
-      -- `not name` should be enough, but LuaJIT 2.0.0 incorrectly reports `(*temporary)` names here
-      if not name or name ~= "(*vararg)" then break end
-      locals[name:gsub("%)$"," "..i..")")] = {value, select(2,pcall(tostring,value))}
-      i = i + 1
-    end
-    -- get upvalues
-    i = 1
-    local ups = {}
-    while func do -- check for func as it may be nil for tail calls
-      local name, value = debug.getupvalue(func, i)
-      if not name then break end
-      ups[name] = {value, select(2,pcall(tostring,value))}
-      i = i + 1
-    end
-    return locals, ups
-  end
-
-  local stack = {}
-  local linemap = mobdebug.linemap
-  for i = (start or 0), 100 do
-    local source = debug.getinfo(i, "Snl")
-    if not source then break end
-
-    local src = source.source
-    if src:find("@") == 1 then
-      src = src:sub(2):gsub("\\", "/")
-      if src:find("%./") == 1 then src = src:sub(3) end
-    end
-
-    table.insert(stack, { -- remove basedir from source
-      {source.name, removebasedir(src, basedir),
-       linemap and linemap(source.linedefined, source.source) or source.linedefined,
-       linemap and linemap(source.currentline, source.source) or source.currentline,
-       source.what, source.namewhat, source.short_src},
-      vars(i+1)})
-    if source.what == 'main' then break end
-  end
-  return stack
-end
-
-local function set_breakpoint(file, line)
-  if file == '-' and lastfile then file = lastfile
-  elseif iscasepreserving then file = string.lower(file) end
-  if not breakpoints[line] then breakpoints[line] = {} end
-  breakpoints[line][file] = true
-end
-
-local function remove_breakpoint(file, line)
-  if file == '-' and lastfile then file = lastfile
-  elseif file == '*' and line == 0 then breakpoints = {}
-  elseif iscasepreserving then file = string.lower(file) end
-  if breakpoints[line] then breakpoints[line][file] = nil end
-end
-
-local function has_breakpoint(file, line)
-  return breakpoints[line]
-     and breakpoints[line][iscasepreserving and string.lower(file) or file]
-end
-
-local function restore_vars(vars)
-  if type(vars) ~= 'table' then return end
-
-  -- locals need to be processed in the reverse order, starting from
-  -- the inner block out, to make sure that the localized variables
-  -- are correctly updated with only the closest variable with
-  -- the same name being changed
-  -- first loop find how many local variables there is, while
-  -- the second loop processes them from i to 1
-  local i = 1
-  while true do
-    local name = debug.getlocal(3, i)
-    if not name then break end
-    i = i + 1
-  end
-  i = i - 1
-  local written_vars = {}
-  while i > 0 do
-    local name = debug.getlocal(3, i)
-    if not written_vars[name] then
-      if string.sub(name, 1, 1) ~= '(' then
-        debug.setlocal(3, i, rawget(vars, name))
-      end
-      written_vars[name] = true
-    end
-    i = i - 1
-  end
-
-  i = 1
-  local func = debug.getinfo(3, "f").func
-  while true do
-    local name = debug.getupvalue(func, i)
-    if not name then break end
-    if not written_vars[name] then
-      if string.sub(name, 1, 1) ~= '(' then
-        debug.setupvalue(func, i, rawget(vars, name))
-      end
-      written_vars[name] = true
-    end
-    i = i + 1
-  end
-end
-
-local function capture_vars(level, thread)
-  level = (level or 0)+2 -- add two levels for this and debug calls
-  local func = (thread and debug.getinfo(thread, level, "f") or debug.getinfo(level, "f") or {}).func
-  if not func then return {} end
-
-  local vars = {['...'] = {}}
-  local i = 1
-  while true do
-    local name, value = debug.getupvalue(func, i)
-    if not name then break end
-    if string.sub(name, 1, 1) ~= '(' then vars[name] = value end
-    i = i + 1
-  end
-  i = 1
-  while true do
-    local name, value
-    if thread then
-      name, value = debug.getlocal(thread, level, i)
-    else
-      name, value = debug.getlocal(level, i)
-    end
-    if not name then break end
-    if string.sub(name, 1, 1) ~= '(' then vars[name] = value end
-    i = i + 1
-  end
-  -- get varargs (these use negative indices)
-  i = 1
-  while true do
-    local name, value
-    if thread then
-      name, value = debug.getlocal(thread, level, -i)
-    else
-      name, value = debug.getlocal(level, -i)
-    end
-    -- `not name` should be enough, but LuaJIT 2.0.0 incorrectly reports `(*temporary)` names here
-    if not name or name ~= "(*vararg)" then break end
-    vars['...'][i] = value
-    i = i + 1
-  end
-  -- returned 'vars' table plays a dual role: (1) it captures local values
-  -- and upvalues to be restored later (in case they are modified in "eval"),
-  -- and (2) it provides an environment for evaluated chunks.
-  -- getfenv(func) is needed to provide proper environment for functions,
-  -- including access to globals, but this causes vars[name] to fail in
-  -- restore_vars on local variables or upvalues with `nil` values when
-  -- 'strict' is in effect. To avoid this `rawget` is used in restore_vars.
-  setmetatable(vars, { __index = getfenv(func), __newindex = getfenv(func) })
-  return vars
-end
-
-local function stack_depth(start_depth)
-  for i = start_depth, 0, -1 do
-    if debug.getinfo(i, "l") then return i+1 end
-  end
-  return start_depth
-end
-
-local function is_safe(stack_level)
-  -- the stack grows up: 0 is getinfo, 1 is is_safe, 2 is debug_hook, 3 is user function
-  if stack_level == 3 then return true end
-  for i = 3, stack_level do
-    -- return if it is not safe to abort
-    local info = debug.getinfo(i, "S")
-    if not info then return true end
-    if info.what == "C" then return false end
-  end
-  return true
-end
-
-local function in_debugger()
-  local this = debug.getinfo(1, "S").source
-  -- only need to check few frames as mobdebug frames should be close
-  for i = 3, 7 do
-    local info = debug.getinfo(i, "S")
-    if not info then return false end
-    if info.source == this then return true end
-  end
-  return false
-end
-
-local function is_pending(peer)
-  -- if there is something already in the buffer, skip check
-  if not buf and checkcount >= mobdebug.checkcount then
-    peer:settimeout(0) -- non-blocking
-    buf = peer:receive(1)
-    peer:settimeout() -- back to blocking
-    checkcount = 0
-  end
-  return buf
-end
-
-local function readnext(peer, num)
-  peer:settimeout(0) -- non-blocking
-  local res, err, partial = peer:receive(num)
-  peer:settimeout() -- back to blocking
-  return res or partial or '', err
-end
-
-local function handle_breakpoint(peer)
-  -- check if the buffer has the beginning of SETB/DELB command;
-  -- this is to avoid reading the entire line for commands that
-  -- don't need to be handled here.
-  if not buf or not (buf:sub(1,1) == 'S' or buf:sub(1,1) == 'D') then return end
-
-  -- check second character to avoid reading STEP or other S* and D* commands
-  if #buf == 1 then buf = buf .. readnext(peer, 1) end
-  if buf:sub(2,2) ~= 'E' then return end
-
-  -- need to read few more characters
-  buf = buf .. readnext(peer, 5-#buf)
-  if buf ~= 'SETB ' and buf ~= 'DELB ' then return end
-
-  local res, _, partial = peer:receive() -- get the rest of the line; blocking
-  if not res then
-    if partial then buf = buf .. partial end
-    return
-  end
-
-  local _, _, cmd, file, line = (buf..res):find("^([A-Z]+)%s+(.-)%s+(%d+)%s*$")
-  if cmd == 'SETB' then set_breakpoint(file, tonumber(line))
-  elseif cmd == 'DELB' then remove_breakpoint(file, tonumber(line))
-  else
-    -- this looks like a breakpoint command, but something went wrong;
-    -- return here to let the "normal" processing to handle,
-    -- although this is likely to not go well.
-    return
-  end
-
-  buf = nil
-end
-
-local function normalize_path(file)
-  local n
-  repeat
-    file, n = file:gsub("/+%.?/+","/") -- remove all `//` and `/./` references
-  until n == 0
-  -- collapse all up-dir references: this will clobber UNC prefix (\\?\)
-  -- and disk on Windows when there are too many up-dir references: `D:\foo\..\..\bar`;
-  -- handle the case of multiple up-dir references: `foo/bar/baz/../../../more`;
-  -- only remove one at a time as otherwise `../../` could be removed;
-  repeat
-    file, n = file:gsub("[^/]+/%.%./", "", 1)
-  until n == 0
-  -- there may still be a leading up-dir reference left (as `/../` or `../`); remove it
-  return (file:gsub("^(/?)%.%./", "%1"))
-end
-
-local function debug_hook(event, line)
-  -- (1) LuaJIT needs special treatment. Because debug_hook is set for
-  -- *all* coroutines, and not just the one being debugged as in regular Lua
-  -- (http://lua-users.org/lists/lua-l/2011-06/msg00513.html),
-  -- need to avoid debugging mobdebug's own code as LuaJIT doesn't
-  -- always correctly generate call/return hook events (there are more
-  -- calls than returns, which breaks stack depth calculation and
-  -- 'step' and 'step over' commands stop working; possibly because
-  -- 'tail return' events are not generated by LuaJIT).
-  -- the next line checks if the debugger is run under LuaJIT and if
-  -- one of debugger methods is present in the stack, it simply returns.
-  if jit then
-    -- when luajit is compiled with LUAJIT_ENABLE_LUA52COMPAT,
-    -- coroutine.running() returns non-nil for the main thread.
-    local coro, main = coroutine.running()
-    if not coro or main then coro = 'main' end
-    local disabled = coroutines[coro] == false
-      or coroutines[coro] == nil and coro ~= (coro_debugee or 'main')
-    if coro_debugee and disabled or not coro_debugee and (disabled or in_debugger())
-    then return end
-  end
-
-  -- (2) check if abort has been requested and it's safe to abort
-  if abort and is_safe(stack_level) then error(abort) end
-
-  -- (3) also check if this debug hook has not been visited for any reason.
-  -- this check is needed to avoid stepping in too early
-  -- (for example, when coroutine.resume() is executed inside start()).
-  if not seen_hook and in_debugger() then return end
-
-  if event == "call" then
-    stack_level = stack_level + 1
-  elseif event == "return" or event == "tail return" then
-    stack_level = stack_level - 1
-  elseif event == "line" then
-    if mobdebug.linemap then
-      local ok, mappedline = pcall(mobdebug.linemap, line, debug.getinfo(2, "S").source)
-      if ok then line = mappedline end
-      if not line then return end
-    end
-
-    -- may need to fall through because of the following:
-    -- (1) step_into
-    -- (2) step_over and stack_level <= step_level (need stack_level)
-    -- (3) breakpoint; check for line first as it's known; then for file
-    -- (4) socket call (only do every Xth check)
-    -- (5) at least one watch is registered
-    if not (
-      step_into or step_over or breakpoints[line] or watchescnt > 0
-      or is_pending(server)
-    ) then checkcount = checkcount + 1; return end
-
-    checkcount = mobdebug.checkcount -- force check on the next command
-
-    -- this is needed to check if the stack got shorter or longer.
-    -- unfortunately counting call/return calls is not reliable.
-    -- the discrepancy may happen when "pcall(load, '')" call is made
-    -- or when "error()" is called in a function.
-    -- in either case there are more "call" than "return" events reported.
-    -- this validation is done for every "line" event, but should be "cheap"
-    -- as it checks for the stack to get shorter (or longer by one call).
-    -- start from one level higher just in case we need to grow the stack.
-    -- this may happen after coroutine.resume call to a function that doesn't
-    -- have any other instructions to execute. it triggers three returns:
-    -- "return, tail return, return", which needs to be accounted for.
-    stack_level = stack_depth(stack_level+1)
-
-    local caller = debug.getinfo(2, "S")
-
-    -- grab the filename and fix it if needed
-    local file = lastfile
-    if (lastsource ~= caller.source) then
-      file, lastsource = caller.source, caller.source
-      -- technically, users can supply names that may not use '@',
-      -- for example when they call loadstring('...', 'filename.lua').
-      -- Unfortunately, there is no reliable/quick way to figure out
-      -- what is the filename and what is the source code.
-      -- If the name doesn't start with `@`, assume it's a file name if it's all on one line.
-      if find(file, "^@") or not find(file, "[\r\n]") then
-        file = gsub(gsub(file, "^@", ""), "\\", "/")
-        -- normalize paths that may include up-dir or same-dir references
-        -- if the path starts from the up-dir or reference,
-        -- prepend `basedir` to generate absolute path to keep breakpoints working.
-        -- ignore qualified relative path (`D:../`) and UNC paths (`\\?\`)
-        if find(file, "^%.%./") then file = basedir..file end
-        if find(file, "/%.%.?/") then file = normalize_path(file) end
-        -- need this conversion to be applied to relative and absolute
-        -- file names as you may write "require 'Foo'" to
-        -- load "foo.lua" (on a case insensitive file system) and breakpoints
-        -- set on foo.lua will not work if not converted to the same case.
-        if iscasepreserving then file = string.lower(file) end
-        if find(file, "^%./") then file = sub(file, 3)
-        else file = gsub(file, "^"..q(basedir), "") end
-        -- some file systems allow newlines in file names; remove these.
-        file = gsub(file, "\n", ' ')
-      else
-        file = mobdebug.line(file)
-      end
-
-      -- set to true if we got here; this only needs to be done once per
-      -- session, so do it here to at least avoid setting it for every line.
-      seen_hook = true
-      lastfile = file
-    end
-
-    if is_pending(server) then handle_breakpoint(server) end
-
-    local vars, status, res
-    if (watchescnt > 0) then
-      vars = capture_vars(1)
-      for index, value in pairs(watches) do
-        setfenv(value, vars)
-        local ok, fired = pcall(value)
-        if ok and fired then
-          status, res = cororesume(coro_debugger, events.WATCH, vars, file, line, index)
-          break -- any one watch is enough; don't check multiple times
-        end
-      end
-    end
-
-    -- need to get into the "regular" debug handler, but only if there was
-    -- no watch that was fired. If there was a watch, handle its result.
-    local getin = (status == nil) and
-      (step_into
-      -- when coroutine.running() return `nil` (main thread in Lua 5.1),
-      -- step_over will equal 'main', so need to check for that explicitly.
-      or (step_over and step_over == (coroutine.running() or 'main') and stack_level <= step_level)
-      or has_breakpoint(file, line)
-      or is_pending(server))
-
-    if getin then
-      vars = vars or capture_vars(1)
-      step_into = false
-      step_over = false
-      status, res = cororesume(coro_debugger, events.BREAK, vars, file, line)
-    end
-
-    -- handle 'stack' command that provides stack() information to the debugger
-    while status and res == 'stack' do
-      -- resume with the stack trace and variables
-      if vars then restore_vars(vars) end -- restore vars so they are reflected in stack values
-      status, res = cororesume(coro_debugger, events.STACK, stack(3), file, line)
-    end
-
-    -- need to recheck once more as resume after 'stack' command may
-    -- return something else (for example, 'exit'), which needs to be handled
-    if status and res and res ~= 'stack' then
-      if not abort and res == "exit" then mobdebug.onexit(1, true); return end
-      if not abort and res == "done" then mobdebug.done(); return end
-      abort = res
-      -- only abort if safe; if not, there is another (earlier) check inside
-      -- debug_hook, which will abort execution at the first safe opportunity
-      if is_safe(stack_level) then error(abort) end
-    elseif not status and res then
-      error(res, 2) -- report any other (internal) errors back to the application
-    end
-
-    if vars then restore_vars(vars) end
-
-    -- last command requested Step Over/Out; store the current thread
-    if step_over == true then step_over = coroutine.running() or 'main' end
-  end
-end
-
-local function stringify_results(params, status, ...)
-  if not status then return status, ... end -- on error report as it
-
-  params = params or {}
-  if params.nocode == nil then params.nocode = true end
-  if params.comment == nil then params.comment = 1 end
-
-  local t = {...}
-  for i,v in pairs(t) do -- stringify each of the returned values
-    local ok, res = pcall(mobdebug.line, v, params)
-    t[i] = ok and res or ("%q"):format(res):gsub("\010","n"):gsub("\026","\\026")
-  end
-  -- stringify table with all returned values
-  -- this is done to allow each returned value to be used (serialized or not)
-  -- intependently and to preserve "original" comments
-  return pcall(mobdebug.dump, t, {sparse = false})
-end
-
-local function isrunning()
-  return coro_debugger and (corostatus(coro_debugger) == 'suspended' or corostatus(coro_debugger) == 'running')
-end
-
--- this is a function that removes all hooks and closes the socket to
--- report back to the controller that the debugging is done.
--- the script that called `done` can still continue.
-local function done()
-  if not (isrunning() and server) then return end
-
-  if not jit then
-    for co, debugged in pairs(coroutines) do
-      if debugged then debug.sethook(co) end
-    end
-  end
-
-  debug.sethook()
-  server:close()
-
-  coro_debugger = nil -- to make sure isrunning() returns `false`
-  seen_hook = nil -- to make sure that the next start() call works
-  abort = nil -- to make sure that callback calls use proper "abort" value
-end
-
-local function debugger_loop(sev, svars, sfile, sline)
-  local command
-  local app, osname
-  local eval_env = svars or {}
-  local function emptyWatch () return false end
-  local loaded = {}
-  for k in pairs(package.loaded) do loaded[k] = true end
-
-  while true do
-    local line, err
-    local wx = rawget(genv, "wx") -- use rawread to make strict.lua happy
-    if (wx or mobdebug.yield) and server.settimeout then server:settimeout(mobdebug.yieldtimeout) end
-    while true do
-      line, err = server:receive()
-      if not line and err == "timeout" then
-        -- yield for wx GUI applications if possible to avoid "busyness"
-        app = app or (wx and wx.wxGetApp and wx.wxGetApp())
-        if app then
-          local win = app:GetTopWindow()
-          local inloop = app:IsMainLoopRunning()
-          osname = osname or wx.wxPlatformInfo.Get():GetOperatingSystemFamilyName()
-          if win and not inloop then
-            -- process messages in a regular way
-            -- and exit as soon as the event loop is idle
-            if osname == 'Unix' then wx.wxTimer(app):Start(10, true) end
-            local exitLoop = function()
-              win:Disconnect(wx.wxID_ANY, wx.wxID_ANY, wx.wxEVT_IDLE)
-              win:Disconnect(wx.wxID_ANY, wx.wxID_ANY, wx.wxEVT_TIMER)
-              app:ExitMainLoop()
-            end
-            win:Connect(wx.wxEVT_IDLE, exitLoop)
-            win:Connect(wx.wxEVT_TIMER, exitLoop)
-            app:MainLoop()
-          end
-        elseif mobdebug.yield then mobdebug.yield()
-        end
-      elseif not line and err == "closed" then
-        error("Debugger connection closed", 0)
-      else
-        -- if there is something in the pending buffer, prepend it to the line
-        if buf then line = buf .. line; buf = nil end
-        break
-      end
-    end
-    if server.settimeout then server:settimeout() end -- back to blocking
-    command = string.sub(line, string.find(line, "^[A-Z]+"))
-    if command == "SETB" then
-      local _, _, _, file, line = string.find(line, "^([A-Z]+)%s+(.-)%s+(%d+)%s*$")
-      if file and line then
-        set_breakpoint(file, tonumber(line))
-        server:send("200 OK\n")
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "DELB" then
-      local _, _, _, file, line = string.find(line, "^([A-Z]+)%s+(.-)%s+(%d+)%s*$")
-      if file and line then
-        remove_breakpoint(file, tonumber(line))
-        server:send("200 OK\n")
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "EXEC" then
-      -- extract any optional parameters
-      local params = string.match(line, "--%s*(%b{})%s*$")
-      local _, _, chunk = string.find(line, "^[A-Z]+%s+(.+)$")
-      if chunk then
-        local func, res = mobdebug.loadstring(chunk)
-        local status
-        if func then
-          local pfunc = params and loadstring("return "..params) -- use internal function
-          params = pfunc and pfunc()
-          params = (type(params) == "table" and params or {})
-          local stack = tonumber(params.stack)
-          -- if the requested stack frame is not the current one, then use a new capture
-          -- with a specific stack frame: `capture_vars(0, coro_debugee)`
-          local env = stack and coro_debugee and capture_vars(stack-1, coro_debugee) or eval_env
-          setfenv(func, env)
-          status, res = stringify_results(params, pcall(func, unpack(env['...'] or {})))
-        end
-        if status then
-          if mobdebug.onscratch then mobdebug.onscratch(res) end
-          server:send("200 OK " .. tostring(#res) .. "\n")
-          server:send(res)
-        else
-          -- fix error if not set (for example, when loadstring is not present)
-          if not res then res = "Unknown error" end
-          server:send("401 Error in Expression " .. tostring(#res) .. "\n")
-          server:send(res)
-        end
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "LOAD" then
-      local _, _, size, name = string.find(line, "^[A-Z]+%s+(%d+)%s+(%S.-)%s*$")
-      size = tonumber(size)
-
-      if abort == nil then -- no LOAD/RELOAD allowed inside start()
-        if size > 0 then server:receive(size) end
-        if sfile and sline then
-          server:send("201 Started " .. sfile .. " " .. tostring(sline) .. "\n")
-        else
-          server:send("200 OK 0\n")
-        end
-      else
-        -- reset environment to allow required modules to load again
-        -- remove those packages that weren't loaded when debugger started
-        for k in pairs(package.loaded) do
-          if not loaded[k] then package.loaded[k] = nil end
-        end
-
-        if size == 0 and name == '-' then -- RELOAD the current script being debugged
-          server:send("200 OK 0\n")
-          coroyield("load")
-        else
-          -- receiving 0 bytes blocks (at least in luasocket 2.0.2), so skip reading
-          local chunk = size == 0 and "" or server:receive(size)
-          if chunk then -- LOAD a new script for debugging
-            local func, res = mobdebug.loadstring(chunk, "@"..name)
-            if func then
-              server:send("200 OK 0\n")
-              debugee = func
-              coroyield("load")
-            else
-              server:send("401 Error in Expression " .. tostring(#res) .. "\n")
-              server:send(res)
-            end
-          else
-            server:send("400 Bad Request\n")
-          end
-        end
-      end
-    elseif command == "SETW" then
-      local _, _, exp = string.find(line, "^[A-Z]+%s+(.+)%s*$")
-      if exp then
-        local func, res = mobdebug.loadstring("return(" .. exp .. ")")
-        if func then
-          watchescnt = watchescnt + 1
-          local newidx = #watches + 1
-          watches[newidx] = func
-          server:send("200 OK " .. tostring(newidx) .. "\n")
-        else
-          server:send("401 Error in Expression " .. tostring(#res) .. "\n")
-          server:send(res)
-        end
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "DELW" then
-      local _, _, index = string.find(line, "^[A-Z]+%s+(%d+)%s*$")
-      index = tonumber(index)
-      if index > 0 and index <= #watches then
-        watchescnt = watchescnt - (watches[index] ~= emptyWatch and 1 or 0)
-        watches[index] = emptyWatch
-        server:send("200 OK\n")
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "RUN" then
-      server:send("200 OK\n")
-
-      local ev, vars, file, line, idx_watch = coroyield()
-      eval_env = vars
-      if ev == events.BREAK then
-        server:send("202 Paused " .. file .. " " .. tostring(line) .. "\n")
-      elseif ev == events.WATCH then
-        server:send("203 Paused " .. file .. " " .. tostring(line) .. " " .. tostring(idx_watch) .. "\n")
-      elseif ev == events.RESTART then
-        -- nothing to do
-      else
-        server:send("401 Error in Execution " .. tostring(#file) .. "\n")
-        server:send(file)
-      end
-    elseif command == "STEP" then
-      server:send("200 OK\n")
-      step_into = true
-
-      local ev, vars, file, line, idx_watch = coroyield()
-      eval_env = vars
-      if ev == events.BREAK then
-        server:send("202 Paused " .. file .. " " .. tostring(line) .. "\n")
-      elseif ev == events.WATCH then
-        server:send("203 Paused " .. file .. " " .. tostring(line) .. " " .. tostring(idx_watch) .. "\n")
-      elseif ev == events.RESTART then
-        -- nothing to do
-      else
-        server:send("401 Error in Execution " .. tostring(#file) .. "\n")
-        server:send(file)
-      end
-    elseif command == "OVER" or command == "OUT" then
-      server:send("200 OK\n")
-      step_over = true
-
-      -- OVER and OUT are very similar except for
-      -- the stack level value at which to stop
-      if command == "OUT" then step_level = stack_level - 1
-      else step_level = stack_level end
-
-      local ev, vars, file, line, idx_watch = coroyield()
-      eval_env = vars
-      if ev == events.BREAK then
-        server:send("202 Paused " .. file .. " " .. tostring(line) .. "\n")
-      elseif ev == events.WATCH then
-        server:send("203 Paused " .. file .. " " .. tostring(line) .. " " .. tostring(idx_watch) .. "\n")
-      elseif ev == events.RESTART then
-        -- nothing to do
-      else
-        server:send("401 Error in Execution " .. tostring(#file) .. "\n")
-        server:send(file)
-      end
-    elseif command == "BASEDIR" then
-      local _, _, dir = string.find(line, "^[A-Z]+%s+(.+)%s*$")
-      if dir then
-        basedir = iscasepreserving and string.lower(dir) or dir
-        -- reset cached source as it may change with basedir
-        lastsource = nil
-        server:send("200 OK\n")
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "SUSPEND" then
-      -- do nothing; it already fulfilled its role
-    elseif command == "DONE" then
-      coroyield("done")
-      return -- done with all the debugging
-    elseif command == "STACK" then
-      -- first check if we can execute the stack command
-      -- as it requires yielding back to debug_hook it cannot be executed
-      -- if we have not seen the hook yet as happens after start().
-      -- in this case we simply return an empty result
-      local vars, ev = {}
-      if seen_hook then
-        ev, vars = coroyield("stack")
-      end
-      if ev and ev ~= events.STACK then
-        server:send("401 Error in Execution " .. tostring(#vars) .. "\n")
-        server:send(vars)
-      else
-        local params = string.match(line, "--%s*(%b{})%s*$")
-        local pfunc = params and loadstring("return "..params) -- use internal function
-        params = pfunc and pfunc()
-        params = (type(params) == "table" and params or {})
-        if params.nocode == nil then params.nocode = true end
-        if params.sparse == nil then params.sparse = false end
-        -- take into account additional levels for the stack frames and data management
-        if tonumber(params.maxlevel) then params.maxlevel = tonumber(params.maxlevel)+4 end
-
-        local ok, res = pcall(mobdebug.dump, vars, params)
-        if ok then
-          server:send("200 OK " .. tostring(res) .. "\n")
-        else
-          server:send("401 Error in Execution " .. tostring(#res) .. "\n")
-          server:send(res)
-        end
-      end
-    elseif command == "OUTPUT" then
-      local _, _, stream, mode = string.find(line, "^[A-Z]+%s+(%w+)%s+([dcr])%s*$")
-      if stream and mode and stream == "stdout" then
-        -- assign "print" in the global environment
-        local default = mode == 'd'
-        genv.print = default and iobase.print or corowrap(function()
-          -- wrapping into coroutine.wrap protects this function from
-          -- being stepped through in the debugger.
-          -- don't use vararg (...) as it adds a reference for its values,
-          -- which may affect how they are garbage collected
-          while true do
-            local tbl = {coroutine.yield()}
-            if mode == 'c' then iobase.print(unpack(tbl)) end
-            for n = 1, #tbl do
-              tbl[n] = select(2, pcall(mobdebug.line, tbl[n], {nocode = true, comment = false})) end
-            local file = table.concat(tbl, "\t").."\n"
-            server:send("204 Output " .. stream .. " " .. tostring(#file) .. "\n" .. file)
-          end
-        end)
-        if not default then genv.print() end -- "fake" print to start printing loop
-        server:send("200 OK\n")
-      else
-        server:send("400 Bad Request\n")
-      end
-    elseif command == "EXIT" then
-      server:send("200 OK\n")
-      coroyield("exit")
-    else
-      server:send("400 Bad Request\n")
-    end
-  end
-end
-
-local function output(stream, data)
-  if server then return server:send("204 Output "..stream.." "..tostring(#data).."\n"..data) end
-end
-
-local function connect(controller_host, controller_port)
-  local sock, err = socket.tcp()
-  if not sock then return nil, err end
-
-  if sock.settimeout then sock:settimeout(mobdebug.connecttimeout) end
-  local res, err = sock:connect(controller_host, tostring(controller_port))
-  if sock.settimeout then sock:settimeout() end
-
-  if not res then return nil, err end
-  return sock
-end
-
-local lasthost, lastport
-
--- Starts a debug session by connecting to a controller
-local function start(controller_host, controller_port)
-  -- only one debugging session can be run (as there is only one debug hook)
-  if isrunning() then return end
-
-  lasthost = controller_host or lasthost
-  lastport = controller_port or lastport
-
-  controller_host = lasthost or "localhost"
-  controller_port = lastport or mobdebug.port
-
-  local err
-  server, err = mobdebug.connect(controller_host, controller_port)
-  if server then
-    -- correct stack depth which already has some calls on it
-    -- so it doesn't go into negative when those calls return
-    -- as this breaks subsequence checks in stack_depth().
-    -- start from 16th frame, which is sufficiently large for this check.
-    stack_level = stack_depth(16)
-
-    -- provide our own traceback function to report errors remotely
-    -- but only under Lua 5.1/LuaJIT as it's not called under Lua 5.2+
-    -- (http://lua-users.org/lists/lua-l/2016-05/msg00297.html)
-    local function f() return function()end end
-    if f() ~= f() then -- Lua 5.1 or LuaJIT
-      local dtraceback = debug.traceback
-      debug.traceback = function (...)
-        if select('#', ...) >= 1 then
-          local thr, err, lvl = ...
-          if type(thr) ~= 'thread' then err, lvl = thr, err end
-          local trace = dtraceback(err, (lvl or 1)+1)
-          if genv.print == iobase.print then -- no remote redirect
-            return trace
-          else
-            genv.print(trace) -- report the error remotely
-            return -- don't report locally to avoid double reporting
-          end
-        end
-        -- direct call to debug.traceback: return the original.
-        -- debug.traceback(nil, level) doesn't work in Lua 5.1
-        -- (http://lua-users.org/lists/lua-l/2011-06/msg00574.html), so
-        -- simply remove first frame from the stack trace
-        local tb = dtraceback("", 2) -- skip debugger frames
-        -- if the string is returned, then remove the first new line as it's not needed
-        return type(tb) == "string" and tb:gsub("^\n","") or tb
-      end
-    end
-    coro_debugger = corocreate(debugger_loop)
-    debug.sethook(debug_hook, HOOKMASK)
-    seen_hook = nil -- reset in case the last start() call was refused
-    step_into = true -- start with step command
-    return true
-  else
-    print(("Could not connect to %s:%s: %s")
-      :format(controller_host, controller_port, err or "unknown error"))
-  end
-end
-
--- Starts a debug session by waiting for a controller to connect
-local function listen(port)
-  -- only one debugging session can be run (as there is only one debug hook)
-  if isrunning() then return end
-
-  local err
-  local listen_socket, err = socket.bind("*", port or mobdebug.port)
-
-  print("Listening for debugger on " .. listen_socket:getsockname())
-
-  if err then error(err) end
-
-  server, err = listen_socket:accept()
-
-  print("Debugger connected from " .. server:getsockname())
-
-  listen_socket:close()
-
-  if server then
-    -- correct stack depth which already has some calls on it
-    -- so it doesn't go into negative when those calls return
-    -- as this breaks subsequence checks in stack_depth().
-    -- start from 16th frame, which is sufficiently large for this check.
-    stack_level = stack_depth(16)
-
-    -- provide our own traceback function to report errors remotely
-    -- but only under Lua 5.1/LuaJIT as it's not called under Lua 5.2+
-    -- (http://lua-users.org/lists/lua-l/2016-05/msg00297.html)
-    local function f() return function()end end
-    if f() ~= f() then -- Lua 5.1 or LuaJIT
-      local dtraceback = debug.traceback
-      debug.traceback = function (...)
-        if select('#', ...) >= 1 then
-          local thr, err, lvl = ...
-          if type(thr) ~= 'thread' then err, lvl = thr, err end
-          local trace = dtraceback(err, (lvl or 1)+1)
-          if genv.print == iobase.print then -- no remote redirect
-            return trace
-          else
-            genv.print(trace) -- report the error remotely
-            return -- don't report locally to avoid double reporting
-          end
-        end
-        -- direct call to debug.traceback: return the original.
-        -- debug.traceback(nil, level) doesn't work in Lua 5.1
-        -- (http://lua-users.org/lists/lua-l/2011-06/msg00574.html), so
-        -- simply remove first frame from the stack trace
-        local tb = dtraceback("", 2) -- skip debugger frames
-        -- if the string is returned, then remove the first new line as it's not needed
-        return type(tb) == "string" and tb:gsub("^\n","") or tb
-      end
-    end
-    coro_debugger = corocreate(debugger_loop)
-    debug.sethook(debug_hook, HOOKMASK)
-    seen_hook = nil -- reset in case the last start() call was refused
-    step_into = true -- start with step command
-    return true
-  else
-    print(("Could not connect to %s:%s: %s")
-      :format(controller_host, controller_port, err or "unknown error"))
-  end
-end
-
-local function controller(controller_host, controller_port, scratchpad)
-  -- only one debugging session can be run (as there is only one debug hook)
-  if isrunning() then return end
-
-  lasthost = controller_host or lasthost
-  lastport = controller_port or lastport
-
-  controller_host = lasthost or "localhost"
-  controller_port = lastport or mobdebug.port
-
-  local exitonerror = not scratchpad
-  local err
-  server, err = mobdebug.connect(controller_host, controller_port)
-  if server then
-    local function report(trace, err)
-      local msg = err .. "\n" .. trace
-      server:send("401 Error in Execution " .. tostring(#msg) .. "\n")
-      server:send(msg)
-      return err
-    end
-
-    seen_hook = true -- allow to accept all commands
-    coro_debugger = corocreate(debugger_loop)
-
-    while true do
-      step_into = true -- start with step command
-      abort = false -- reset abort flag from the previous loop
-      if scratchpad then checkcount = mobdebug.checkcount end -- force suspend right away
-
-      coro_debugee = corocreate(debugee)
-      debug.sethook(coro_debugee, debug_hook, HOOKMASK)
-      local status, err = cororesume(coro_debugee, unpack(arg or {}))
-
-      -- was there an error or is the script done?
-      -- 'abort' state is allowed here; ignore it
-      if abort then
-        if tostring(abort) == 'exit' then break end
-      else
-        if status then -- normal execution is done
-          break
-        elseif err and not string.find(tostring(err), deferror) then
-          -- report the error back
-          -- err is not necessarily a string, so convert to string to report
-          report(debug.traceback(coro_debugee), tostring(err))
-          if exitonerror then break end
-          -- check if the debugging is done (coro_debugger is nil)
-          if not coro_debugger then break end
-          -- resume once more to clear the response the debugger wants to send
-          -- need to use capture_vars(0) to capture only two (default) level,
-          -- as even though there is controller() call, because of the tail call,
-          -- the caller may not exist for it;
-          -- This is not entirely safe as the user may see the local
-          -- variable from console, but they will be reset anyway.
-          -- This functionality is used when scratchpad is paused to
-          -- gain access to remote console to modify global variables.
-          local status, err = cororesume(coro_debugger, events.RESTART, capture_vars(0))
-          if not status or status and err == "exit" then break end
-        end
-      end
-    end
-  else
-    print(("Could not connect to %s:%s: %s")
-      :format(controller_host, controller_port, err or "unknown error"))
-    return false
-  end
-  return true
-end
-
-local function scratchpad(controller_host, controller_port)
-  return controller(controller_host, controller_port, true)
-end
-
-local function loop(controller_host, controller_port)
-  return controller(controller_host, controller_port, false)
-end
-
-local function on()
-  if not (isrunning() and server) then return end
-
-  -- main is set to true under Lua5.2 for the "main" chunk.
-  -- Lua5.1 returns co as `nil` in that case.
-  local co, main = coroutine.running()
-  if main then co = nil end
-  if co then
-    coroutines[co] = true
-    debug.sethook(co, debug_hook, HOOKMASK)
-  else
-    if jit then coroutines.main = true end
-    debug.sethook(debug_hook, HOOKMASK)
-  end
-end
-
-local function off()
-  if not (isrunning() and server) then return end
-
-  -- main is set to true under Lua5.2 for the "main" chunk.
-  -- Lua5.1 returns co as `nil` in that case.
-  local co, main = coroutine.running()
-  if main then co = nil end
-
-  -- don't remove coroutine hook under LuaJIT as there is only one (global) hook
-  if co then
-    coroutines[co] = false
-    if not jit then debug.sethook(co) end
-  else
-    if jit then coroutines.main = false end
-    if not jit then debug.sethook() end
-  end
-
-  -- check if there is any thread that is still being debugged under LuaJIT;
-  -- if not, turn the debugging off
-  if jit then
-    local remove = true
-    for _, debugged in pairs(coroutines) do
-      if debugged then remove = false; break end
-    end
-    if remove then debug.sethook() end
-  end
-end
-
--- Handles server debugging commands
-local function handle(params, client, options)
-  -- when `options.verbose` is not provided, use normal `print`; verbose output can be
-  -- disabled (`options.verbose == false`) or redirected (`options.verbose == function()...end`)
-  local verbose = not options or options.verbose ~= nil and options.verbose
-  local print = verbose and (type(verbose) == "function" and verbose or print) or function() end
-  local file, line, watch_idx
-  local _, _, command = string.find(params, "^([a-z]+)")
-  if command == "run" or command == "step" or command == "out"
-  or command == "over" or command == "exit" then
-    client:send(string.upper(command) .. "\n")
-    client:receive() -- this should consume the first '200 OK' response
-    while true do
-      local done = true
-      local breakpoint = client:receive()
-      if not breakpoint then
-        print("Program finished")
-        return nil, nil, false
-      end
-      local _, _, status = string.find(breakpoint, "^(%d+)")
-      if status == "200" then
-        -- don't need to do anything
-      elseif status == "202" then
-        _, _, file, line = string.find(breakpoint, "^202 Paused%s+(.-)%s+(%d+)%s*$")
-        if file and line then
-          print("Paused at file " .. file .. " line " .. line)
-        end
-      elseif status == "203" then
-        _, _, file, line, watch_idx = string.find(breakpoint, "^203 Paused%s+(.-)%s+(%d+)%s+(%d+)%s*$")
-        if file and line and watch_idx then
-          print("Paused at file " .. file .. " line " .. line .. " (watch expression " .. watch_idx .. ": [" .. watches[watch_idx] .. "])")
-        end
-      elseif status == "204" then
-        local _, _, stream, size = string.find(breakpoint, "^204 Output (%w+) (%d+)$")
-        if stream and size then
-          local size = tonumber(size)
-          local msg = size > 0 and client:receive(size) or ""
-          print(msg)
-          if outputs[stream] then outputs[stream](msg) end
-          -- this was just the output, so go back reading the response
-          done = false
-        end
-      elseif status == "401" then
-        local _, _, size = string.find(breakpoint, "^401 Error in Execution (%d+)$")
-        if size then
-          local msg = client:receive(tonumber(size))
-          print("Error in remote application: " .. msg)
-          return nil, nil, msg
-        end
-      else
-        print("Unknown error")
-        return nil, nil, "Debugger error: unexpected response '" .. breakpoint .. "'"
-      end
-      if done then break end
-    end
-  elseif command == "done" then
-    client:send(string.upper(command) .. "\n")
-    -- no response is expected
-  elseif command == "setb" or command == "asetb" then
-    _, _, _, file, line = string.find(params, "^([a-z]+)%s+(.-)%s+(%d+)%s*$")
-    if file and line then
-      -- if this is a file name, and not a file source
-      if not file:find('^".*"$') then
-        file = string.gsub(file, "\\", "/") -- convert slash
-        file = removebasedir(file, basedir)
-      end
-      client:send("SETB " .. file .. " " .. line .. "\n")
-      if command == "asetb" or client:receive() == "200 OK" then
-        set_breakpoint(file, line)
-      else
-        print("Error: breakpoint not inserted")
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "setw" then
-    local _, _, exp = string.find(params, "^[a-z]+%s+(.+)$")
-    if exp then
-      client:send("SETW " .. exp .. "\n")
-      local answer = client:receive()
-      local _, _, watch_idx = string.find(answer, "^200 OK (%d+)%s*$")
-      if watch_idx then
-        watches[watch_idx] = exp
-        print("Inserted watch exp no. " .. watch_idx)
-      else
-        local _, _, size = string.find(answer, "^401 Error in Expression (%d+)$")
-        if size then
-          local err = client:receive(tonumber(size)):gsub(".-:%d+:%s*","")
-          print("Error: watch expression not set: " .. err)
-        else
-          print("Error: watch expression not set")
-        end
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "delb" or command == "adelb" then
-    _, _, _, file, line = string.find(params, "^([a-z]+)%s+(.-)%s+(%d+)%s*$")
-    if file and line then
-      -- if this is a file name, and not a file source
-      if not file:find('^".*"$') then
-        file = string.gsub(file, "\\", "/") -- convert slash
-        file = removebasedir(file, basedir)
-      end
-      client:send("DELB " .. file .. " " .. line .. "\n")
-      if command == "adelb" or client:receive() == "200 OK" then
-        remove_breakpoint(file, line)
-      else
-        print("Error: breakpoint not removed")
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "delallb" then
-    local file, line = "*", 0
-    client:send("DELB " .. file .. " " .. tostring(line) .. "\n")
-    if client:receive() == "200 OK" then
-      remove_breakpoint(file, line)
-    else
-      print("Error: all breakpoints not removed")
-    end
-  elseif command == "delw" then
-    local _, _, index = string.find(params, "^[a-z]+%s+(%d+)%s*$")
-    if index then
-      client:send("DELW " .. index .. "\n")
-      if client:receive() == "200 OK" then
-        watches[index] = nil
-      else
-        print("Error: watch expression not removed")
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "delallw" then
-    for index, exp in pairs(watches) do
-      client:send("DELW " .. index .. "\n")
-      if client:receive() == "200 OK" then
-        watches[index] = nil
-      else
-        print("Error: watch expression at index " .. index .. " [" .. exp .. "] not removed")
-      end
-    end
-  elseif command == "eval" or command == "exec"
-      or command == "load" or command == "loadstring"
-      or command == "reload" then
-    local _, _, exp = string.find(params, "^[a-z]+%s+(.+)$")
-    if exp or (command == "reload") then
-      if command == "eval" or command == "exec" then
-        exp = (exp:gsub("%-%-%[(=*)%[.-%]%1%]", "") -- remove comments
-                  :gsub("%-%-.-\n", " ") -- remove line comments
-                  :gsub("\n", " ")) -- convert new lines
-        if command == "eval" then exp = "return " .. exp end
-        client:send("EXEC " .. exp .. "\n")
-      elseif command == "reload" then
-        client:send("LOAD 0 -\n")
-      elseif command == "loadstring" then
-        local _, _, _, file, lines = string.find(exp, "^([\"'])(.-)%1%s+(.+)")
-        if not file then
-           _, _, file, lines = string.find(exp, "^(%S+)%s+(.+)")
-        end
-        client:send("LOAD " .. tostring(#lines) .. " " .. file .. "\n")
-        client:send(lines)
-      else
-        local file = io.open(exp, "r")
-        if not file and pcall(require, "winapi") then
-          -- if file is not open and winapi is there, try with a short path;
-          -- this may be needed for unicode paths on windows
-          winapi.set_encoding(winapi.CP_UTF8)
-          local shortp = winapi.short_path(exp)
-          file = shortp and io.open(shortp, "r")
-        end
-        if not file then return nil, nil, "Cannot open file " .. exp end
-        -- read the file and remove the shebang line as it causes a compilation error
-        local lines = file:read("*all"):gsub("^#!.-\n", "\n")
-        file:close()
-
-        local file = string.gsub(exp, "\\", "/") -- convert slash
-        file = removebasedir(file, basedir)
-        client:send("LOAD " .. tostring(#lines) .. " " .. file .. "\n")
-        if #lines > 0 then client:send(lines) end
-      end
-      while true do
-        local params, err = client:receive()
-        if not params then
-          return nil, nil, "Debugger connection " .. (err or "error")
-        end
-        local done = true
-        local _, _, status, len = string.find(params, "^(%d+).-%s+(%d+)%s*$")
-        if status == "200" then
-          len = tonumber(len)
-          if len > 0 then
-            local status, res
-            local str = client:receive(len)
-            -- handle serialized table with results
-            local func, err = loadstring(str)
-            if func then
-              status, res = pcall(func)
-              if not status then err = res
-              elseif type(res) ~= "table" then
-                err = "received "..type(res).." instead of expected 'table'"
-              end
-            end
-            if err then
-              print("Error in processing results: " .. err)
-              return nil, nil, "Error in processing results: " .. err
-            end
-            print(unpack(res))
-            return res[1], res
-          end
-        elseif status == "201" then
-          _, _, file, line = string.find(params, "^201 Started%s+(.-)%s+(%d+)%s*$")
-        elseif status == "202" or params == "200 OK" then
-          -- do nothing; this only happens when RE/LOAD command gets the response
-          -- that was for the original command that was aborted
-        elseif status == "204" then
-          local _, _, stream, size = string.find(params, "^204 Output (%w+) (%d+)$")
-          if stream and size then
-            local size = tonumber(size)
-            local msg = size > 0 and client:receive(size) or ""
-            print(msg)
-            if outputs[stream] then outputs[stream](msg) end
-            -- this was just the output, so go back reading the response
-            done = false
-          end
-        elseif status == "401" then
-          len = tonumber(len)
-          local res = client:receive(len)
-          print("Error in expression: " .. res)
-          return nil, nil, res
-        else
-          print("Unknown error")
-          return nil, nil, "Debugger error: unexpected response after EXEC/LOAD '" .. params .. "'"
-        end
-        if done then break end
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "listb" then
-    for l, v in pairs(breakpoints) do
-      for f in pairs(v) do
-        print(f .. ": " .. l)
-      end
-    end
-  elseif command == "listw" then
-    for i, v in pairs(watches) do
-      print("Watch exp. " .. i .. ": " .. v)
-    end
-  elseif command == "suspend" then
-    client:send("SUSPEND\n")
-  elseif command == "stack" then
-    local opts = string.match(params, "^[a-z]+%s+(.+)$")
-    client:send("STACK" .. (opts and " "..opts or "") .."\n")
-    local resp = client:receive()
-    local _, _, status, res = string.find(resp, "^(%d+)%s+%w+%s+(.+)%s*$")
-    if status == "200" then
-      local func, err = loadstring(res)
-      if func == nil then
-        print("Error in stack information: " .. err)
-        return nil, nil, err
-      end
-      local ok, stack = pcall(func)
-      if not ok then
-        print("Error in stack information: " .. stack)
-        return nil, nil, stack
-      end
-      for _,frame in ipairs(stack) do
-        print(mobdebug.line(frame[1], {comment = false}))
-      end
-      return stack
-    elseif status == "401" then
-      local _, _, len = string.find(resp, "%s+(%d+)%s*$")
-      len = tonumber(len)
-      local res = len > 0 and client:receive(len) or "Invalid stack information."
-      print("Error in expression: " .. res)
-      return nil, nil, res
-    else
-      print("Unknown error")
-      return nil, nil, "Debugger error: unexpected response after STACK"
-    end
-  elseif command == "output" then
-    local _, _, stream, mode = string.find(params, "^[a-z]+%s+(%w+)%s+([dcr])%s*$")
-    if stream and mode then
-      client:send("OUTPUT "..stream.." "..mode.."\n")
-      local resp, err = client:receive()
-      if not resp then
-        print("Unknown error: "..err)
-        return nil, nil, "Debugger connection error: "..err
-      end
-      local _, _, status = string.find(resp, "^(%d+)%s+%w+%s*$")
-      if status == "200" then
-        print("Stream "..stream.." redirected")
-        outputs[stream] = type(options) == 'table' and options.handler or nil
-      -- the client knows when she is doing, so install the handler
-      elseif type(options) == 'table' and options.handler then
-        outputs[stream] = options.handler
-      else
-        print("Unknown error")
-        return nil, nil, "Debugger error: can't redirect "..stream
-      end
-    else
-      print("Invalid command")
-    end
-  elseif command == "basedir" then
-    local _, _, dir = string.find(params, "^[a-z]+%s+(.+)$")
-    if dir then
-      dir = string.gsub(dir, "\\", "/") -- convert slash
-      if not string.find(dir, "/$") then dir = dir .. "/" end
-
-      local remdir = dir:match("\t(.+)")
-      if remdir then dir = dir:gsub("/?\t.+", "/") end
-      basedir = dir
-
-      client:send("BASEDIR "..(remdir or dir).."\n")
-      local resp, err = client:receive()
-      if not resp then
-        print("Unknown error: "..err)
-        return nil, nil, "Debugger connection error: "..err
-      end
-      local _, _, status = string.find(resp, "^(%d+)%s+%w+%s*$")
-      if status == "200" then
-        print("New base directory is " .. basedir)
-      else
-        print("Unknown error")
-        return nil, nil, "Debugger error: unexpected response after BASEDIR"
-      end
-    else
-      print(basedir)
-    end
-  elseif command == "help" then
-    print("setb <file> <line>    -- sets a breakpoint")
-    print("delb <file> <line>    -- removes a breakpoint")
-    print("delallb               -- removes all breakpoints")
-    print("setw <exp>            -- adds a new watch expression")
-    print("delw <index>          -- removes the watch expression at index")
-    print("delallw               -- removes all watch expressions")
-    print("run                   -- runs until next breakpoint")
-    print("step                  -- runs until next line, stepping into function calls")
-    print("over                  -- runs until next line, stepping over function calls")
-    print("out                   -- runs until line after returning from current function")
-    print("listb                 -- lists breakpoints")
-    print("listw                 -- lists watch expressions")
-    print("eval <exp>            -- evaluates expression on the current context and returns its value")
-    print("exec <stmt>           -- executes statement on the current context")
-    print("load <file>           -- loads a local file for debugging")
-    print("reload                -- restarts the current debugging session")
-    print("stack                 -- reports stack trace")
-    print("output stdout <d|c|r> -- capture and redirect io stream (default|copy|redirect)")
-    print("basedir [<path>]      -- sets the base path of the remote application, or shows the current one")
-    print("done                  -- stops the debugger and continues application execution")
-    print("exit                  -- exits debugger and the application")
-  else
-    local _, _, spaces = string.find(params, "^(%s*)$")
-    if spaces then
-      return nil, nil, "Empty command"
-    else
-      print("Invalid command")
-      return nil, nil, "Invalid command"
-    end
-  end
-  return file, line
-end
-
--- Starts debugging server
--- local function listen(host, port)
---   host = host or "*"
---   port = port or mobdebug.port
-
---   local socket = require "builtins.scripts.socket"
-
---   print("Lua Remote Debugger")
---   print("Run the program you wish to debug")
-
---   local server = socket.bind(host, port)
---   local client = server:accept()
-
---   client:send("STEP\n")
---   client:receive()
-
---   local breakpoint = client:receive()
---   local _, _, file, line = string.find(breakpoint, "^202 Paused%s+(.-)%s+(%d+)%s*$")
---   if file and line then
---     print("Paused at file " .. file )
---     print("Type 'help' for commands")
---   else
---     local _, _, size = string.find(breakpoint, "^401 Error in Execution (%d+)%s*$")
---     if size then
---       print("Error in remote application: ")
---       print(client:receive(size))
---     end
---   end
-
---   while true do
---     io.write("> ")
---     local file, line, err = handle(io.read("*line"), client)
---     if not file and err == false then break end -- completed debugging
---   end
-
---   client:close()
--- end
-
-local cocreate
-local function coro()
-  if cocreate then return end -- only set once
-  cocreate = cocreate or coroutine.create
-  coroutine.create = function(f, ...)
-    return cocreate(function(...)
-      mobdebug.on()
-      return f(...)
-    end, ...)
-  end
-end
-
-local moconew
-local function moai()
-  if moconew then return end -- only set once
-  moconew = moconew or (MOAICoroutine and MOAICoroutine.new)
-  if not moconew then return end
-  MOAICoroutine.new = function(...)
-    local thread = moconew(...)
-    -- need to support both thread.run and getmetatable(thread).run, which
-    -- was used in earlier MOAI versions
-    local mt = thread.run and thread or getmetatable(thread)
-    local patched = mt.run
-    mt.run = function(self, f, ...)
-      return patched(self,  function(...)
-        mobdebug.on()
-        return f(...)
-      end, ...)
-    end
-    return thread
-  end
-end
-
--- make public functions available
-mobdebug.setbreakpoint = set_breakpoint
-mobdebug.removebreakpoint = remove_breakpoint
-mobdebug.listen = listen
-mobdebug.loop = loop
-mobdebug.scratchpad = scratchpad
-mobdebug.handle = handle
-mobdebug.connect = connect
-mobdebug.start = start
-mobdebug.on = on
-mobdebug.off = off
-mobdebug.moai = moai
-mobdebug.coro = coro
-mobdebug.done = done
-mobdebug.pause = function() step_into = true end
-mobdebug.yield = nil -- callback
-mobdebug.output = output
-mobdebug.onexit = os and os.exit or done
-mobdebug.onscratch = nil -- callback
-mobdebug.basedir = function(b) if b then basedir = b end return basedir end
-
-return mobdebug
-/_defold/debugger/mobdebug.luaÚÄLJ =/_defold/debugger/mobdebug.luaa  
-'4  +    >  TÄ TÄ)  H  ¿
-pcallrequire module  ok res   í  -G' QÄ4  7   > TÄ  F    TÚ)  H 	_ENVgetupvalue
-debugf  level name value   U  
-O 4  ' +    > =  TÄ4 H ¿_Gselect          findenv f   r  %P+    >  TÄ4  7    >H  ¿setupvalue
-debugfindenv f  t  level 	 g   ,}'  ' '
- ' IÄ   K˛+  + >G  ¿3¿error deferror a 
-  _  \   Ç 4  7  % % @ 	%%%1!([%(%)%.%%%+%-%*%?%[%^%$%]])	gsubstring      s   $   ä 4    F 	next   t   n ù +  6   TÄ+  , +  + 9 4  +  6 @    tostring              syms symn s   ü $õ%  4 4   > =  7% % > 7% 1 >$0  ÄH ¿Ä (%d%w+)
-[^%w]	gsubtostring_               syms symn val   ⁄  2Kû4    > TÄ4 +    TÄ+ 4   >6  TÄ+  7  >>  TÄ4    > TÄ4   >  TÄ%  7  > 7% % > 7%	 %
- >H ¿ ¿	\026n
-	gsub%qstringformattostringnumber	type                      huge snum numformat s  3 Æ  %° +    TÄ TÄ'  +   TÄ%  4 ' 4 4   > =% $  TÄ% H ¿]]tostring
-pcallselect
- --[[                       comm s  l   ò  #P¢+  6   T	Ä+  6 +    >$  TÄ+   TÄ+ 4  ' 4 4   > = =   TÄ+ % 4   >$>H  ¿¿¿ Can't serialize tostring
-pcallselect               globals comment fatal safestr error s  $l  $ ’  /a§  TÄ%  TÄ 4  > T
-Ä 7% >  TÄ+  6 TÄ) TÄ)   TÄ TÄ% +  >% $  TÄ%    TÄ   TÄ% TÄ%   $ F  ¿.][^[%l%u_][%w_]*$
-matchstring	typekeyword safestr path  0name  0n *plain safe 
- s  ´ %  4 +  >% $ 7+   > ? ¿  formatdtostring%0            maxn tonumber d   √  4I¨+  6 
-  TÄ'  TÄ+ 4    >6  TÄ% 4   > 7% + >$+  6
-  TÄ'  TÄ+ 4   >6  TÄ% 4  > 7% + >$  TÄ) TÄ) H  ¿¿¿%d+	gsubtostringz	typek to padnum a  5b  5 •	 :©+   >  TÄ' 3  1 4 7  1 >0  ÄG     	sort
-table  stringbnumberatonumber k  o  n  maxn to  padnum  4   
-ª +   7   + @  	¿ Ä__tostring    mt t  5   
-º +   7   + @  	¿ Ä__serialize    mt t  Å&)êÈ∞F4    > TÄ'  +	  
-  >	+
-   >
-  TÄ4   > TÄ% TÄ + % + $  T
-Ä
-  TÄ + % + $  TÄ% + 6   TÄ+ +   
- + % + + 6 $9 % + %  >$0 –Å4  	 > TÄ4 1 >4 1	 >+ 7
-
- TÄ  TÄ  TÄ+  TÄ
- 9   TÄ  TÄ  4    >  TbÅ+  T	Ä % + %  >$0  ÄH +  TÄ
- 9 4   >  T	Ä % +    >$0  ÄH +   TÄ+ '   T	Ä % + %  >$0  ÄH 4 7  +	   TÄ  >2  2  '  ' IÄ9K˛+	   TÄ +	  TÄ +
-   >DÄ6 TÄ 9BN˘+	   TÄ +	  TÄ+	  )  9+ 7  T	Ä  TÄ+    + 7>+   TÄ   TÄ) TÄ) 4  >T®Ä6 4   > TÄ TÄ) TÄ) + 7  TÄ+ 76  TîÄ+ 7  TÄ+ 76  TãÄ+ 7  TÄ+ 76  TÇÄ+ 7  TÄ+ 74   >6  TvÄ  TÄ  TÄTqÄ TÄ TÄ+ 6  TNÄ+ 6  TÄ+ 6  TÄ+ +   % 9+ + +  > =+ +  +      +! )" >9+ +   % 9+ 6 % 4 + 6  TÄ+ 6  TÄ+  >>% $+ +   + % + 4  +! 6!! ! T"Ä+! " )#  $ % >!> $ 9TÄ  +     + 6   ! >9+   TÄ+  6 , + '   TÄTÄANV4 7 TÄ%  >  TÄ%   $  TÄ% 4 7  %!   TÄ%"   $  TÄ+ $>  TÄ%"  %# $  TÄ%# +   T	Ä+      >  TÄ    $+    >$0  ÄH TIÄ+ 6  TÄ+  TÄ
- 9  +    >$0  ÄH T7Ä T.Ä+  TÄ
- 9 + 7$  T	Ä %% +    >$0  ÄH 4 4 7&  > T
-Ä%' +  >%( +    >$  TÄ+    >$0  ÄH TÄ +   >$0  ÄH 0  ÄG  H  ¿	¿¿¿¿¿
-¿Ä¿ ¿¿  ¿¿¿¿¿¿,'@serialized'))((loadstring or load)(	dump%function() --[[..skipped..]] endnocode}
-,concat{{
-repstring]tostring[placeholderfunctionvaltypeignorekeyignorekeyallowvalignoreipairssortkeysmin	mathmaxlen	nextmaxlvl{}metatostring  
-pcall
-tablerefnil=number	type
-
-
-
-
-    !!!!!!!!!!!"""""""##########$$$$$$$$%%%%%%%%%%%%&&&&&&&''''''''(((((((())))))******++++++++++++,,,,,,------------------......................000000000000011122222233333  7777777888888888999999999999999:::::::::;;;;;;;;;;;;;;;;;;;;;;;;;<<<<=====>>>>>>>>>??@@@@@AAAAAAAAAAAAABBBBBCCCCCCCCCCCCDDDDDDDDDDDEEEEEEEFFgetmetatable safename space seen sref comment opts maxl maxlen maxnum pairs alphanumsort sparse badtype globals iname gensym val2str custom globerr safestr t  êname  êindent  êinsref  êpath  êplainindex  êlevel  êttype 
-Ülevel  Ümt  Üspath Çsname  Çtag Ëto  tr  so sr  maxn Q®o  ®out  ®  key n 
-  key sparse (Ó´ ´ ´n ®key  ®value ùktype  ùplainindex  ùsname Hpath $prefix :9head 	0body !tail 	ok Dres  func 
- ÷	'' {≈ìi7 777777 7	 	 T
-Ä%	 T
-Ä%		 7
-
- 
- TÄ4
- 7
-
-+  7>7%  TÄ% $7  TÄ+  7>  TÄ4 77  TÄ% 2  2 %  % $;2  '  1 1 1 1 1 4 7> TÄ7  TÄ1 1   TÄ% TÄ%  	 $     > '  T	Ä4! 7"  > $  TÄ% 7  T	Ä '  TÄ	 %# $  TÄ%   TÄ   $   T 	Ä%$   ! " %#% $ % %&& $&0  ÄH   ¿	¿ ¿¿¿¿endreturn do local @--[[incomplete output with shared/self-references skipped]]concat
-table;
-  functionsortkeys	type     ={}local 
-%.17gnumformatcomment_metatostringmaxlength	huge	mathmaxlevel compactnohugecustomsparsemaxnum
-fatalindent	name
-cdddddddeeeeeffffffffffffffggggggggggggghhhhhhhhhhhhhhhhhhtonumber snum globals error keyword getmetatable pairs badtype t  |opts  |name windent  wfatal  wmaxnum  wsparse scustom  shuge  sspace hmaxl  hmaxlen dmetatostring  diname Ucomm  Unumformat Qseen 	Hsref  Hsyms  Hsymn  Hgensym Gsafestr Fcomment Egloberr Dsafename Calphanumsort 	:val2str 9sepr 2body -tail warn      
-Å H   t  k   B Ç +  %  >G   cannot call functions    error t   õ
-	 7~˛  TÄ7  TÄ+    TÄ+ 2  3 1 :1 :>+   TÄ4 %   $*  >  T
-Ä+   TÄ4   * 	 >    TÄ  0  ÄF +   TÄ+   >4  0  Ä@ 
-¿    
-pcallreturn 	load__call __index   	safe							
-
-
-
-G setmetatable error loadstring setfenv data  8opts  8env 'f 
-res   _   
-*ã   TÄ+   >DÄ9 BN˝H  ¿          pairs a  b    k v   a  é +    + 3   > ? ¿¿ sparse	name_compact       s merge a  opts   \  è +    + 3   > ? ¿¿ sortkeyscomment       s merge a  opts   f  ê +    + 3   > ? ¿¿ sortkeysindent  comment       s merge a  opts   ç	 $_ΩÑç%   % % % 2 4 (  >% 94 ( >% 94 '  >% 93 4	   TÄ4	 7
-  TÄ4
- 1 2  2	  4
-  
- TÄ4
- 4 3 >TÄ) 9AN¸ 
- >DÄ9	BN˝4 3 >TÄ 4 6
-> TÄ6
-  TÄ2  >DÄ %  $9	BN˘ANÎ1 1 1 3 : :::::1 :1  :!1" :#0  ÄH 
-¿¿	¿¿Ä
-block 	line 	dump 	loadserialize_VERSION_DESCRIPTION_COPYRIGHT
-_NAME     .
-table	type  coroutine
-debugio	mathstring
-tableos  and
-breakdo	elseelseifend
-falseforfunction	gotoifin
-localnilnotorrepeatreturn	then	true
-until
-whileipairs	_ENV_G getmetatable
-debug userdata
-cdatathread0/0-1/0 --[[-math.huge]]1/0 --[[math.huge]]tostring&Lua serializer and pretty printerPaul Kulchenko	0.30serpentÄÄ¿ˇÄÄ¿ˇ 
-
-
-xÖáààààààâääããååååtonumber error setmetatable loadstring setfenv n ]v  ]c [d  [snum Jbadtype Igetmetatable Apairs @keyword :globals  :G  :  _ k    k v    _ g    k v  s 
-deserialize merge  ñ 'Lò	+    TÄ  7  > 7% +  7 > = $>  TÄ  7   >  TÄ  H T
-Ä4 7  % +  >$% @ G  ¿5¿	gsubstringsub^	find
-lower	iscasepreserving q path  (basedir  ( ∂  d∞§ 4  7  % >7' 2  QÄ4  7   >  TÄTÄ4 7 ' '	 > TÄ2 ;4 ' 4		 4
-
-  >	 = <  9T‚' QÄ4  7   >  TÄ TÄTÄ 7% %	 
- % $		>2 ;4 '	 4
-	 4
-  >
- = <  9T‡' 2    TÄQÄ4  7  >  TÄTÄ2 ;4 '	 4
-	 4
-  >
- = <  9TË  F getupvalue) %)$	gsub(*vararg)tostring
-pcallselect(substringgetlocal	funcfgetinfo
-debugÄÄ¿ô											f  efunc ^i ]locals \name value  name value  ups name value   ‹aæ£81  2  +  7  TÄ'  'd ' IUÄ4 7	 %
- >  T	ÄTMÄ7		 7
-	% >
-	
-  T
-Ä	 7
-	' >
-
- 7
-	
-%
- % >
-	
- 	 7
-	% >
-	
-  T
-Ä	 7
-	' >
-	
- 4
- 7
-
- 2 2 7;+ 	 + >;  TÄ 77>  TÄ7;  TÄ 77>  TÄ7;7;7;7;;  > < >
-7
-
- T
-ÄTÄK´0  ÄH ¿7¿2Ä	mainshort_srcnamewhat	whatcurrentlinelinedefined	nameinsert
-table%.//\	gsubsub@	findsourceSnlgetinfo
-debuglinemap ÄÄ¿ô!#$$%%%%%%&&&&&''')******++++++++++,,,,,,,,,,,/////00000001111111111222222222233333334444/5555%77mobdebug removebasedir basedir start  bvars `stack _linemap ]V V Vi Tsource Osrc K ‹  P›   TÄ+    TÄ+   TÄ+   TÄ4 7  >  + 6  TÄ+ 2  9+ 6) 9 G  %Ä¿"Ä
-lowerstring-lastfile iscasepreserving breakpoints file  line   Û T‰   TÄ+    TÄ+   TÄ  TÄ	  TÄ2  , TÄ+   TÄ4 7  >  + 6  TÄ+ 6)  9 G  %Ä"Ä¿
-lowerstring*- lastfile breakpoints iscasepreserving file   line    ¢  >Î+  6  TÄ+  6+   TÄ4  7  >  TÄ  6H "Ä¿
-lowerstringbreakpoints iscasepreserving file  line   ¯ ^ú)4    > TÄG  ' Q
-Ä4 7'  >  TÄTÄ Tı 2  '   TÄQÄ4 7'  >6  TÄ4 7 ' ' > T	Ä4 7'  +    	 > =) 9 Tﬂ' 4 7' %	 >7
-Q Ä4 7  >  TÄTÄ6  TÄ4 7 ' ' > T	Ä4 7  +  	  
- > =) 9 TﬂG  ¿setupvaluegetupvalue	funcfgetinfosetlocal(substringgetlocal
-debug
-table	type	
-   !!!""""""""#########%%'')rawget vars  _i Wname written_vars Jname 	func "name  › ÅÈõ0  TÄ'      TÄ4  7   % >  TÄ4  7  % >  TÄ2  7  TÄ2  H 3 2  :' QÄ4  7  >  TÄTÄ4 7 '	 '
- >	 TÄ9TÏ' Q!Ä*   T	Ä4  7
- 	  
- >  TÄ4  7
-  	 >    TÄTÄ4 7 '	 '
- >	 TÄ9Tﬁ' QÄ*   T	Ä4  7
- 	  
- >  TÄ4  7
-  	 >    TÄ TÄTÄ79T„+   3 + 	 >:+ 	 >:>H 	¿Ä__newindex__index  (*vararg)getlocal(substringgetupvalue...  	funcfgetinfo
-debug			
-
-
-
-
-
-
-
-
-       #####$$%%............/setmetatable getfenv level  Çthread  Çfunc jvars ci bname value  name value  name #value   É  +Õ  '  'ˇˇI
-Ä4  7 % >  TÄ H KˆH  lgetinfo
-debugstart_depth    i 	 √  <‘
-	   TÄ) H '   ' IÄ4  7 % >  TÄ) H 7 TÄ) H KÒ) H C	whatSgetinfo
-debug		stack_level    i info 	 ≈    7‡	4   7  ' % > 7  ' ' ' IÄ4  7 % >  TÄ) H 7  TÄ) H KÒ) H sourceSgetinfo
-debugthis   i info 	 √ 7Î	+    TÄ+ + 7  TÄ  7 '  >  7 ' >,    7 >.  +  H /Ä)Ä¿receivesettimeoutcheckcount buf checkcount mobdebug peer   ù   6ˆ  7  '  >  7  >  7  > TÄ TÄ%  F receivesettimeoutpeer  num  res 	
-err  
-partial  
- ± `œ˝+    TÄ+   7 ' ' > T	Ä+   7 ' ' > TÄG  +   	  TÄ+  +   ' >$,  +   7 ' ' > TÄG  +  +   +   >$,  +   TÄ+   TÄG    7 >  TÄ  TÄ+   $,  G  +   $ 7% >	 T	Ä+	 
- +  > =	T	
-Ä
- T	Ä+	 
- +  > =	T	ÄG  /   G  /ÄB¿9¿
-¿:¿	DELB	SETB!^([A-Z]+)%s+(.-)%s+(%d+)%s*$	findreceive
-DELB 
-SETB EDSsub
-buf readnext set_breakpoint tonumber remove_breakpoint peer  ares <%_  %partial  %_ _  cmd  file  line   Œ  (û)  Q	Ä  7  % % >   	  TˆQ
-Ä  7  % % ' >   	  Tı  7  % % >H %1^(/?)%.%./[^/]+/%.%.///+%.?/+	gsub 	
-
-
-
-
-
-
-
-file  n  Ω '"úØÆ¢+    T(Ä4  7>  TÄ  TÄ% + 6
- TÄ+ 6  TÄ+   TÄ%  TÄ) TÄ) +   TÄ  T	Ä+   TÄ  TÄ+ >  TÄG  +   TÄ+ + >  TÄ+ + >+   TÄ+ >  TÄG    TÄ+  , TWÅ  TÄ  TÄ+  , TOÅ  TMÅ+	 7  TÄ4 +	 7 4	 7
-' % >7>  TÄ   TÄG  +
-   TÄ+   TÄ+ 6  TÄ+ '    T	Ä+ + >  TÄ+  , G  +	 7, + +  >, 4	 7
-' % >+ + 7 TYÄ77,  +  % >  TÄ+  % >  TBÄ+ +  % % >% % > +  % >  TÄ+  $+  % >  TÄ+  > +   TÄ4 7 > +  % >  TÄ+  ' > T
-Ä+  % + + >$% > +  % % > TÄ+	 7 > / , + + >  TÄ+ + >* + '   T!Ä+ ' > + + >D
-Ä+   >4  >  TÄ  TÄ+  +! +" 7   
- >  TÄB
-N
-Á  TÄ+
-   TÄ+   TÄ+ 4  7>  T	Ä%  TÄ+ +#  TÄ+$  	 >  TÄ+ + >TÄ) TÄ)   TÄ  TÄ+ '	 > /
- / +  +	! +
-" 7
-
-   >	    TÄ TÄQÄ  TÄ+% 	 >+  +	! +
-" 7
-
-+& ' >  >	  TÈ  T"Ä  T Ä TÄ+   TÄ TÄ+	 7 '	 )
- >G  +   TÄ! TÄ+	 7!>G  , + +	 >  T	Ä+ +	 >TÄ  TÄ  TÄ+ 	 '
- >  TÄ+% 	 >+  TÄ4  7>  T	Ä% , G  ¿ ¿Ä@¿'Ä?¿-Ä¿(Ä¿*Ä+Ä"Ä&ÄA¿.Ä)Ä>¿%Ä$Ä¿¿2ÄD¿¿¿5¿C¿=¿¿#¿Ä¿Ä!¿,Ä;¿<¿8¿	doneonexit	exit
-STACK
-stack
-BREAK
-WATCH 
-^	^%./
-lowerstring/%.%.?/^%.%.//\	[
-]^@checkcountsourceSgetinfo
-debug
-pcalllinemap	linetail returnreturn	call	mainrunningcoroutine    !!!!""####$$$$$$$$$$$%%%&&&00000000000000111222222444AAAAACCCCCFGGGGHHHHNNNNNNNNNNNNOOOOOOOOOOTTTTTTTTTUUUUUUUUUUZZZZZZZZ[[[[[[[[[[[[\\\\\\\\\\^^^^^^^`````efiiiiiiiikllllmmmmnnnnoooopppqqqqrrrrrrrrrrrsnnzz~~~~~~~~~~~~~~~~~~~ÄÄÄÄÄÄÄÄÄÇÇÉÉÉÉÉÉÑÖÜÜÜÜÜÜÜÜÜÜäääääåååååçççççççççççççííííííìììììììììììîîîîîîîîîïòòòòòòòòòôôôôööööùùùùù††††††††††¢jit coroutines coro_debugee in_debugger abort is_safe stack_level error seen_hook mobdebug step_into step_over breakpoints watchescnt is_pending server checkcount stack_depth lastfile lastsource find gsub basedir normalize_path iscasepreserving sub q handle_breakpoint capture_vars pairs watches setfenv cororesume coro_debugger events step_level has_breakpoint restore_vars stack event  ùline  ùcoro %main  %disabled ok Amappedline  caller *îfile ìvars f≠status  ≠res  ≠  index value  ok fired  getin 4f ¬;}“  TÄ C E    TÄ2   7    TÄ) :  7   TÄ' : 2 C <  +   >DÄ4 +	 7		
-   >  T
-Ä
-	 T
-Ä%
- 
- 7
-
-	 >
-
- 7
-
-% % >
-
- 7
-
-%	 %
- >
-9
-BN‰4 + 7 3 @ ¿¿ sparse	dump	\026n
-	gsubformat%q	line
-pcallcommentnocodeÄÄ¿ô						
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-pairs mobdebug params  <status  <t &  i v  ok res   ê   +‰+      TÄ+  +  >    T Ä+  +  >   T Ä)  TÄ)  H  Ä¿runningsuspendedcoro_debugger corostatus  ∏   "ÄÎ+   >    TÄ+     T ÄG  +     T Ä+  + > DÄ  TÄ4  7 >BN¯4   7  > +    7  > /  /  /  G  G¿.Ä¿¿ ¿Ä(Ä'Ä
-closesethook
-debug			
-
-
-
-isrunning server jit pairs coroutines coro_debugger seen_hook abort 	 	 	co debugged        Ä )  H     “   %ï+     7   + 7+ 7+ 7> +     7   + 7+ 7+ 7> +    7  > G  ¿¿ÄExitMainLoopwxEVT_TIMERwxEVT_IDLEwxID_ANYDisconnectwin wx app  —  4yÄQ 2Ä2  4  7> <  +   TÄ+ 7+   > = '   ' IÄ4 ' 4 + 76	 3
- > =9 Kı4 7	  %
- >% $+  7% + % 4  >% 	 $	>T ÕG  ¿    ¿tostring 204 Output 	send
-	concat
-table commentnocode	line
-pcallselect
-printc
-yieldcoroutineÄÄ¿ô										
-
-
-
-
-
-
-mode iobase unpack mobdebug server stream tbl ,  n 
-file  Ç= _Ê—¸û*  TÄ2  1  2	  +
-  4 7>
-DÄ) 9	BN¸Q
-‘É*
- + + % >  TÄ+ 7  T
-Ä+ 7  TÄ+  7+ 7>Q\Ä+  7> 
-  
- TBÄ T@Ä  TÄ TÄ7	 TÄ7	>   T,Ä 7
-> 7>  TÄ77> 7>   TÄ  TÄ TÄ7 > 7'
- ) >1  77 > 77 > 7>0Ω+ 7  Tπ+ 7>Tµ 
- TÄ TÄ+ % '  >T¨+   TÄ+ 
- $
-/  TÄT£+ 7  TÄ+  7>4 7
- 4 7
- % > =  TÄ4 7
- % >  TÄ  TÄ+  +  > =+  7%  >T8É+  7%! >T2É" TÄ4 7
- % >  TÄ  TÄ+	  +  > =+  7%  >TÉ+  7%! >TÉ# T{Ä4 7$
- %% >4 7
- %& >  TiÄ+ 7' >)    T5Ä TÄ+
- %(  $> TÄ > 4)  >* TÄ  TÄ2  + 7+>  T	Ä+   TÄ+  + >  TÄ +   >+  4,  + 7-  TÄ2  > = =    TÄ+ 7.  TÄ+ 7. >+  7%/ 40  >%1 $>+  7 >T±Ç  TÄ%2 +  7%3 40  >%1 $>+  7 >TûÇ+  7%! >TòÇ4 TzÄ4 7
- %5 >+  > +   TÄ'   TÄ+  7 >  TÄ  TÄ+  7%6  %7 40  >%1 $>TqÇ+  7%8 >TkÇ+  4 7>DÄ6	  TÄ4 7)  9BN˜	 TÄ9 T	Ä+  7%8 >+ %: >TPÇ	 TÄ%; TÄ+  7 >  T#Ä+ 7' %<  $>  T
-Ä+  7%8 >, + %: >T2Ç+  7%3 40  >%1 $>+  7 >T"Ç+  7%! >TÇ= T9Ä4 7
- %> >  T,Ä+ 7'%?  %@ $>  TÄ+  , +   + 9+  7%/ 40  >%1 $>T˜Å+  7%3 40  >%1 $>+  7 >TÁÅ+  7%! >T·ÅA T(Ä4 7
- %B >+  > '   TÄ+   TÄ+ + 6 TÄ' TÄ'  , + 9+  7%  >TΩÅ+  7%! >T∑ÅC TCÄ+  7%  >+ > + 7D TÄ+  7%E  %7 40  >%1 $>TúÅ+ 7F TÄ+  7%G  %7 40  >%7 40  >%1 $>TáÅ+ 7H TÄTÇÅ+  7%I 40  >%1 $>+  7 >TrÅJ TDÄ+  7%  >/ + > + 7D TÄ+  7%E  %7 40  >%1 $>TVÅ+ 7F TÄ+  7%G  %7 40  >%7 40  >%1 $>TAÅ+ 7H TÄT<Å+  7%I 40  >%1 $>+  7 >T,ÅK TÄL TLÄ+  7%  >/ L TÄ+  , TÄ+ , + > + 7D TÄ+  7%E  %7 40  >%1 $>TÅ+ 7F TÄ+  7%G  %7 40  >%7 40  >%1 $>TÒÄ+ 7H TÄTÏÄ+  7%I 40  >%1 $>+  7 >T‹ÄM TÄ4 7
- %> >  TÄ+   TÄ4 7N >  TÄ , /  +  7%  >T¡Ä+  7%! >TªÄO TÄT∏ÄP TÄ+ %Q >0  ÄG  T∞ÄR TpÄ2  )  +   TÄ+ %+ >    TÄ+ 7R TÄ+  7%I 40  >%1 $>+  7 >TéÄ4 7$
- %% > TÄ+
- %(  $> TÄ > 4)  >* TÄ  TÄ2  7S  TÄ) :S7T  TÄ) :T+ 7U>  TÄ+ 7U>:U4, + 7V  >  TÄ+  7%/ 40  >%1 $>TNÄ+  7%I 40  >%1 $>+  7 >T>ÄW T,Ä4 7
- %X >  TÄ  TÄY TÄZ TÄ) TÄ) +   TÄ+ 7[  TÄ+ 1\ >:[  TÄ+ 7[>+  7%  >TÄ+  7%! >0Ä] T	Ä+  7%  >+ %^ >TÄ+  7%! >0
-+|0  ÄG  ¿¿¿¿.Ä¿/Ä9¿
-¿:¿¿Ä=¿ÄF¿¿'Ä¿4Ä&Ä#¿!¿*Ä+Ä,Ä-Ä2Ä¿$Ä(Ä1¿¿	exit	EXIT 
-printdstdout"^[A-Z]+%s+(%w+)%s+([dcr])%s*$OUTPUT	dumpmaxlevelsparsenocode
-STACK	done	DONESUSPEND
-lowerBASEDIROUT	OVER	STEP401 Error in Execution RESTART203 Paused 
-WATCH202 Paused 
-BREAKRUN^[A-Z]+%s+(%d+)%s*$	DELW)return(^[A-Z]+%s+(.+)%s*$	SETW@	load-200 OK 0
- 201 Started !^[A-Z]+%s+(%d+)%s+(%S.-)%s*$	LOAD401 Error in Expression Unknown error
-tostring200 OK onscratch...
-pcall
-stack
-table	typereturn loadstring^[A-Z]+%s+(.+)$--%s*(%b{})%s*$
-match	EXEC	DELB400 Bad Request
-200 OK
-	send!^([A-Z]+)%s+(.-)%s+(%d+)%s*$	SETB^[A-Z]+	findsubstringDebugger connection closedclosedMainLoopwxEVT_TIMERwxEVT_IDLEConnect 
-StartwxTimer	Unix!GetOperatingSystemFamilyNameGetwxPlatformInfoIsMainLoopRunningGetTopWindowwxGetApptimeoutreceiveyieldtimeoutsettimeout
-yieldwxloadedpackage                  	 
- 
- 
- 
-                                                                                      ! " " " " " " " # $ $ $ $ % % % % % ( ( ( ( ( ( ( ) * , , , , , , , , - - - - - - - - - - . . / / / / / 0 0 0 0 1 1 1 1 1 1 2 2 2 2 2 2 4 4 4 4 4 5 6 6 7 7 7 7 7 8 8 8 8 9 9 9 9 9 9 : : : : : : < < < < < = > > @ @ @ @ @ A A A A A B B C C C C D E E F F F F F F F G G G G G H H H H H H H H I I I L L L L L L L L L L L L M M M M N N N N N N N N N N N N N N P P Q Q Q Q Q Q Q Q R R R R R R R R R R S S S S S S V V V W W W W W W W W W W X X X X X Y [ [ [ [ [ \ ] ] ^ ^ ^ ^ ^ _ _ _ _ a a a b b b b b b b b c c c c d d d d d d d d d d d d d f f f f f g k k k k k l l l l l l l k k o o o o p p p p p q q q q t t t t t t t t t u u v v v v v v v w w x x x x x y z z z z | | | | | | | | | | } } } } } ~ Ä Ä Ä Ä Ä É Ñ Ñ Ö Ö Ö Ö Ö Ü Ü á á á á á á á à à â â â ä ä ä ã ã å å å å å å å å å å å é é é é é é é é é é è è è è è ê í í í í í ì î î ï ï ï ï ï ñ ñ ñ ñ ó ó ó ó ó ó ó ò ò ò ò ò ò ò ò ò ò ô ô ö ö ö ö ö ö ú ú ú ú ú ù û û ü ü ü ü ü ° ° ¢ £ £ £ £ § § § § § § § § § § § § § • • • • ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ¶ ß ß ß ß ß ™ ™ ™ ™ ™ ™ ™ ™ ™ ™ ´ ´ ´ ´ ´ ¨ ≠ ≠ Æ Æ Æ Æ Æ Ø ± ± ≤ ≥ ≥ ≥ ≥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ ¥ µ µ µ µ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∂ ∑ ∑ ∑ ∑ ∑ ∫ ∫ ∫ ∫ ∫ ∫ ∫ ∫ ∫ ∫ ª ª ª ª ª º Ω Ω Ω Ω æ æ æ æ æ ø √ √ √ √ √ √ ƒ ƒ ∆ ∆ « » » » » … … … … … … … … … … … … …         À À À À À À À À À À À À À À À À À Ã Ã Ã Ã Ã œ œ œ œ œ œ œ œ œ œ – – – – – — “ “ ” ” ” ” ” ‘ ‘ ’ ’ ’ ’ ’ ’ ’ ’ ’ ’ ’ ◊ ÿ ÿ ÿ ÿ ÿ ÿ ⁄ ⁄ ⁄ ⁄ ⁄ € ‹ ‹ ‹ ﬁ ﬁ ﬂ ﬂ ﬂ ‡ ‡ ‡ · · Ê Ê Á Á Á Ë Ë Ë Ë Ë Í Í Í Í Í Í Î Î Î Î Î Î Î Î Î Î Ï Ï Ï Ï Ï Ï Ó Ó Ó Ó Ó Ô Ô Ô Ô Ô Ô Ô      Ò Ò Ò Ò Ò Ò Ò Ò Ú Ú Ú Ú Ú Û Û Û Û Û ı ı ı ı ı ı ı ı ı ı ˜ ˜ ˜ ˜ ˜ ˜ ¯ ¯ ˘ ˘ ˘ ˘ ˘ ˘ ˘ ˘ ˘ ˘ ˘ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ¸ ¸ ¸ ¸ ¸ ˛ ˇ ˇ      pairs rawget genv mobdebug server error buf set_breakpoint tonumber remove_breakpoint loadstring coro_debugee capture_vars setfenv stringify_results unpack abort coroyield debugee watchescnt watches events step_into step_over step_level stack_level basedir iscasepreserving lastsource seen_hook iobase corowrap sev  Ásvars  Ásfile  Ásline  Ácommand Âapp  Âosname  Âeval_env ‚emptyWatch ·loaded ‡  k line “err  “wx Œwin *(inloop %exitLoop _ A_  _  file  line  _ _  _  file  line  params u_ p_  pchunk  pfunc dres  dstatus cpfunc 	.stack env _ Lt_  tsize  tname  t*
- 
- 
-k chunk *func 	res  _ )3_  3exp  3func 	$res  $newidx _ *"_  "index  "ev ,;vars  ;file  ;line  ;idx_watch  ;ev F;vars  ;file  ;line  ;idx_watch  ;ev P;vars  ;file  ;line  ;idx_watch  ;_ C_  dir  vars )mev  mparams #Jpfunc Cok 'res  _ $&_  &stream  &mode  &default  ò 
- )ú+    TÄ+   7 %   % 4  >% 	 $	@ G  .Ä
-tostring 204 Output 	sendserver stream  data   ª 	 #q†
-+  7 >  TÄ)   F 7  TÄ 7+ 7> 7  4  > =7  TÄ 7>  TÄ)   F H ¿¿tostringconnectconnecttimeoutsettimeouttcp	socket mobdebug controller_host  $controller_port  $sock  err   res err        ≈ G       ≈ 1   0  ÄH       Ç 	6m»4   % C  = '   T ÄC  4   > TÄ    +    TÄ'  >+ 7+ 7 TÄH TÄ+ 7 >G  +   % ' > 4   > TÄ  7 % % >  TÄ  H ¿  ^
-	gsubstring
-printthread	type#select	dtraceback genv iobase thr 	err  lvl  trace tb  ¯	 N©Ø7+  >  TÄ0 HÄ  TÄ+ ,  TÄ+ , +   TÄ%   +  TÄ+ 7)  + 7   > , +   T Ä+ ' >, 1  > > TÄ4 74 1 :0 Ä+
- + >,	 4 7+ + >/  / ) 0  ÄH TÄ4 %	  7
-    TÄ% > = G  G  G¿LÄMÄ¿.Ä-Ä>¿¿1¿Ä¿I¿E¿¿(Ä*Äunknown errorformat#Could not connect to %s:%s: %s
-printsethook traceback
-debug connect	portlocalhost
-,,,..../////012222455555555547isrunning lasthost lastport mobdebug server stack_level stack_depth genv iobase coro_debugger corocreate debugger_loop debug_hook HOOKMASK seen_hook step_into controller_host  Ncontroller_port  Nerr 6f dtraceback       Ñ	 G       Ñ	 1   0  ÄH       Ç 	6má	4   % C  = '   T ÄC  4   > TÄ    +    TÄ'  >+ 7+ 7 TÄH TÄ+ 7 >G  +   % ' > 4   > TÄ  7 % % >  TÄ  H ¿  ^
-	gsubstring
-printthread	type#select	dtraceback genv iobase thr 	err  lvl  trace tb  ä
- Z©È<+  >  TÄ0 TÄ)  + 7 %   TÄ+ 7>4 %  7>$>  TÄ+  > 7> , 4 % +  7>$> 7>+   T Ä+ ' >, 1	  > > TÄ4
- 74
- 1 :0 Ä+
- + >,	 4
- 7+ + >/  / ) 0  ÄH TÄ4 %  74 4 	 T	Ä%	 > = G  G  G¿¿¿¿.Ä-Ä>¿¿1¿Ä¿I¿E¿¿(Ä*Äunknown errorcontroller_portcontroller_hostformat#Could not connect to %s:%s: %ssethook traceback
-debug 
-closeDebugger connected from acceptgetsocknameListening for debugger on 
-print	port*	bind					1113333444445677779:::::::::9<isrunning socket mobdebug error server stack_level stack_depth genv iobase coro_debugger corocreate debugger_loop debug_hook HOOKMASK seen_hook step_into port  Zerr Slisten_socket Kerr  Kf $dtraceback  µ  0µ	 %    $+   7% 4  >%  $>+   7 >H  tostring401 Error in Execution 	send
-server trace  err  msg  ›	 èœß	B+  >  TÄ0 âÄ  TÄ+ ,  TÄ+ , +   TÄ%   +  TÄ+ 7 )  + 7   > , +   T[Ä1 / + + >, QSÄ/	 /
-   TÄ+ 7, + + >, 4 7+ + +	 >+ + + 4	  	 T
-Ä2	  > =+
-   T	Ä4 +	
- >	 T›T?ÄT€  TÄT;ÄT◊  T’4
- 74	 
- >	+
- >  TÃ 4	 7		+
- >	4
-  >
- =  TÄT#Ä+   TÄTÄ+ +	 +
- 7
-
-+ '  > =  T
-Ä  T
-∞		 T
-ÆTÄT¨TÄ4 %  7  	 
- T
-Ä%
- > = ) 0  ÄH ) 0  ÄH G  G¿LÄMÄ¿.Ä(ÄÄ¿I¿*Ä'Ä)ÄÄ4ÄE¿¿¿¿3¿!¿=¿unknown errorformat#Could not connect to %s:%s: %s
-printRESTARTtraceback	findstring	exittostringargsethook
-debugcheckcount connect	portlocalhost
-###$$$$$$$&&''(((((((((((+++++++++,,,....777777778888888:;=>>>>>>>>>=???AAAisrunning lasthost lastport mobdebug server seen_hook coro_debugger corocreate debugger_loop step_into abort checkcount coro_debugee debugee debug_hook HOOKMASK cororesume unpack deferror events capture_vars controller_host  ècontroller_port  èscratchpad  èexitonerror werr vreport Ystatus  8err  8status 1err   V   5Î	+     ) @ P¿controller controller_host  controller_port   V   5Ô	+     ) @ P¿controller controller_host  controller_port   ª   &gÛ	+   >    TÄ+     T ÄG  4   7  >   TÄ)      T
-Ä+ ) 9 4 7  + + >TÄ+   TÄ+ ) :4 7+ + >G  G¿.Ä ¿E¿¿¿	mainsethook
-debugrunningcoroutine							isrunning server coroutines debug_hook HOOKMASK jit co main   ∂  	 ;èÉ
-+   >    TÄ+     T ÄG  4   7  >   TÄ)      TÄ+ ) 9 +   TÄ4 7  >TÄ+   TÄ+ ) :+   TÄ4 7>+   TÄ) + + >DÄ  TÄ) TÄBN˙  TÄ4 7>G  G¿.Ä ¿¿¿	mainsethook
-debugrunningcoroutine		
-
-
-isrunning server coroutines jit pairs co 0main  0remove    _ debugged        §
- G    Í\´ ˇ	°†
-Ë  TÄ7 
-  TÄ7 TÄ) TÄ)   T
-Ä4  > TÄ TÄ4   TÄ1 * 4 7	  %
- >
- TÄ
-	 TÄ
-
- TÄ
- TÄ
- T¶Ä 74 7
- >% $> 7>QòÄ)  7>  TÄ % >* ) 0  ÄF 4 7 % > TÄTÄ TÄ4 7 % >      TrÄ  TpÄ %  %  $>ThÄ TÄ4 7 % >       TZÄ  TXÄ  TVÄ %  %  %  % +  6% $>THÄ T#Ä4 7 % >  T?Ä  T=Ä+  >'   TÄ 7 >  TÄ%   >+ 6  TÄ+ 6 >) T#Ä  TÄ4 7 %! >  TÄ 7+  > = %"  $>*  0  ÄF T
-Ä %# >* %$  %% $0  ÄF   TiT0ÑTgT.Ñ
-& T
-Ä 74 7
- >% $>T"Ñ
-' TÄ
-( T=Ä4 7  %) >  	 	 	   T-Ä  T+Ä 7%* >  TÄ4 7+ %, %- > +  + >  7%.  %/  % $>
-( TÄ 7>0 TÄ+   >TÈÉ %1 >TÂÉ %2 >T·É
-3 T@Ä4 7  %4 >  T5Ä 7%5  % $> 7>4 7 %6 >  TÄ+  9 %7  $>TøÉ4 7 %8 >  TÄ 7+  > = 7+%9 % > %:  $>TßÉ %; >T£É %2 >TüÉ
-< TÄ
-= T=Ä4 7  %) >  	 	 	   T-Ä  T+Ä 7%* >  TÄ4 7+ %, %- > +  + >  7%>  %/  % $>
-= TÄ 7>0 TÄ+   >TfÉ %? >TbÉ %2 >T^É
-@ TÄ%A '   7%>  %/ 4B  >% $> 7>0 TÄ+   >TEÉ %C >TAÉ
-D TÄ4 7  %E >  TÄ 7%F  % $> 7>0 TÄ+  )  9T(É %G >T$É %2 >T É
-H TÄ+ +  >DÄ 7%F  % $> 7>0 TÄ+  )  9TÄ %I  %J  %K $>BNÊTˇÇ
-L TÄ
-M TÄ
-N TÄ
-O TÄ
-P TRÅ4 7  %4 >  TÄ
-P TEÅ
-L TÄ
-M TÄ 7+%Q % > 7+%R %/ > 7+% %/ > 
-L TÄ%S  $ 7%T  % $>TyÄ
-P TÄ 7%U >TrÄ
-O T Ä4 7 %V >  T	Ä4 7 %W >     7%X 4B  >%/  % $> 7 >TPÄ4Y 7Z %[ >  TÄ4\ + %] >  TÄ4] 7^4] 7_>4] 7` > TÄ4Y 7Z %[ >   TÄ* %a  $0  ÄF  7b%c > 7+%d % > 7e>4 7+ %, %- >+  + >  7%X 4B  >%/  % $> '   TÄ 7 >Q©Ä 7>  TÄ* %f  TÄ%g $0  ÄF ) 4 7 %h > T<Ä+  > '   TâÄ*  7 >+	  >  TÄ4\  >    TÄ TÄ4  >i TÄ%j 4  >%k $  TÄ %l  $>* %l  $0  ÄF  +
-  > = 8 0  ÄF TTÄm T
-Ä4 7 %n >    THÄ TFÄ0 TÄTCÄ T#Ä4 7 % >  T:Ä  T8Ä+  >'   TÄ 7 >  TÄ%   >+ 6  TÄ+ 6 >) TÄ  TÄ+  >  7 > %o  $>*  0  ÄF T
-Ä %# >* %p  %% $0  ÄF   TXT©ÅTVTßÅ %2 >T£Å
-q TÄ+ + >DÄ+  >DÄ  %r  $>BN¯BNÚTéÅ
-s TÄ+ +  >DÄ %t  %r  $>BN˜T~Å
-u TÄ 7%v >TwÅ
-w TpÄ4 7x  %4 > 7%y   TÄ%/  $  TÄ% % $> 7>4 7 %z > T,Ä+	  >  T	Ä %{  $>*  0  ÄF 4\  >  T	Ä %{  $>*  0  ÄF 4|  >TÄ + 7}83~ > = AN˜0  ÄH T,Å  TÄ4 7 % >+  > '   TÄ 7 >  TÄ%Ä  %o  $>*  0  ÄF TÅ %# >* %Å 0  ÄF TÅ
-Ç TUÄ4 7  %É >  TJÄ  THÄ 7%Ñ  %/  % $> 7>  TÄ %Ö  $>* %Ü  $0  ÄF 4 7 %á > TÄ %à  %â $>+ 4  >i TÄ7ä  TÄ)  9T»Ä4  >i TÄ7ä  TÄ+ 7ä9TºÄ %# >* %ã  $0  ÄF T≤Ä %2 >TÆÄ
-å TWÄ4 7  %4 >  TLÄ4 7+ %, %- > 4 7 %ç >  TÄ %- $ 7x%é >  TÄ 7+%è %- > ,  7%ê  TÄ % $> 7>  TÄ %Ö  $>* %Ü  $0  ÄF 4 7 %á > TÄ %ë + $>TaÄ %# >* %í 0  ÄF TYÄ + >TUÄ
-ì T@Ä %î > %ï > %ñ > %ó > %ò > %ô > %ö > %õ > %ú > %ù > %û > %ü > %† > %° > %¢ > %£ > %§ > %• > %¶ > %ß > %® >TÄ4 7  %© >  TÄ* %™ 0  ÄF TÄ %2 >* %2 0  ÄF   0  ÄF #¿
-¿0¿7¿2Ä9¿:¿¿ ¿¿¿"Ä¿Empty command^(%s*)$@exit                  -- exits debugger and the applicationTdone                  -- stops the debugger and continues application executiondbasedir [<path>]      -- sets the base path of the remote application, or shows the current oneToutput stdout <d|c|r> -- capture and redirect io stream (default|copy|redirect)1stack                 -- reports stack traceDreload                -- restarts the current debugging session>load <file>           -- loads a local file for debuggingGexec <stmt>           -- executes statement on the current context_eval <exp>            -- evaluates expression on the current context and returns its value5listw                 -- lists watch expressions/listb                 -- lists breakpointsSout                   -- runs until line after returning from current functionPover                  -- runs until next line, stepping over function callsPstep                  -- runs until next line, stepping into function calls8run                   -- runs until next breakpoint;delallw               -- removes all watch expressionsCdelw <index>          -- removes the watch expression at index9setw <exp>            -- adds a new watch expression5delallb               -- removes all breakpoints2delb <file> <line>    -- removes a breakpoint/setb <file> <line>    -- sets a breakpoint	help6Debugger error: unexpected response after BASEDIRNew base directory is BASEDIR 
-/?	.+
-	(.+)/$basedir$Debugger error: can't redirect handler redirectedStream ^(%d+)%s+%w+%s*$ Debugger connection error: Unknown error: OUTPUT "^[a-z]+%s+(%w+)%s+([dcr])%s*$output4Debugger error: unexpected response after STACKInvalid stack information.%s+(%d+)%s*$ comment	lineipairs!Error in stack information: ^(%d+)%s+%w+%s+(.+)%s*$
-STACK
-match
-stackSUSPEND
-suspendWatch exp. 
-listw: 
-listb:Debugger error: unexpected response after EXEC/LOAD 'Error in expression: $^201 Started%s+(.-)%s+(%d+)%s*$201"Error in processing results: ! instead of expected 'table'received 
-table^(%d+).-%s+(%d+)%s*$
-errorDebugger connection 
-close^#!.-
-	*all	readCannot open file short_pathCP_UTF8set_encodingwinapi
-pcallr	openio
-LOAD ^(%S+)%s+(.+)^(["'])(.-)%1%s+(.+)LOAD 0 -
-
-EXEC return %-%-.-
-%-%-%[(=*)%[.-%]%1%]reloadloadstring	load	exec	eval] not removed [&Error: watch expression at index delallw(Error: watch expression not removed
-DELW ^[a-z]+%s+(%d+)%s*$	delw'Error: all breakpoints not removedtostring*delallb"Error: breakpoint not removed
-DELB 
-adelb	delb$Error: watch expression not set&Error: watch expression not set: .-:%d+:%s*$^401 Error in Expression (%d+)$Inserted watch exp no. ^200 OK (%d+)%s*$
-SETW ^[a-z]+%s+(.+)$	setwInvalid command#Error: breakpoint not inserted200 OK 
-SETB /\	gsub^".*"$!^([a-z]+)%s+(.-)%s+(%d+)%s*$
-asetb	setb	done'*Debugger error: unexpected response 'Unknown error"Error in remote application: #^401 Error in Execution (%d+)$401^204 Output (%w+) (%d+)$204]): [ (watch expression +^203 Paused%s+(.-)%s+(%d+)%s+(%d+)%s*$203 line Paused at file #^202 Paused%s+(.-)%s+(%d+)%s*$202200^(%d+)Program finishedreceive
-
-upper	send	exit	overout	steprun^([a-z]+)	findstring 
-printfunction	typeverbose                                       	 	 	 	 	 	 	 	 	 
- 
- 
-                                                                                          ! ! ! ! " " " # # # # # # # # # # $ $ $ % % % % % % % % ' ( ) ) * * * * * + + , , , , , , - - - - - . . . . / 1 1 1 2 2 2 2 2 2 2 4 4 4 4 5 6 6 7 7 7 7 7 7 7 7 7 7 9 9 9 9 : : : : : : : : : : ; ; ; ; = = = = = = > > > > > > > ? ? ? ? ? A A A A A A A A A B B B B B B B C C C C C E E E F H H H I J J K K K K K L L M M M M M M M N N N O O O O O P P Q Q R R R R R R T T T T T U U V V V V V V V V V V V W W W W W W Y Y Y [ ] ] ] ^ _ _ _ _ ` ` ` ` ` ` ` ` ` ` a a a a c c c c c c d d d d d d d e e e e e g g g g g g g g g h h h h h h h i i i i i k k k l n n n o p p q q r r r r r r r r r r r s s s s s t t t t t v v v w x x y y y y y z z { { { { { { { | | | | | } } } }    Ä Ç Ç Ç É Ñ Ñ Ö Ö Ö Ö Ü Ü Ü Ü Ü Ü Ü á á á á á à à à à ä ä ä ä ä ä ä ä Ö Ö å ç ç ç ç é é é é è è ê ê ê ê ê ë ë ë ë í í í í ì ì ì ì ì î î î î î ï ï ï ï ï ï ñ ñ ñ ñ ñ ó ó ó ó ó ó ó ó ò ò ô ô ô ô ô ö ö õ õ õ õ õ ú ú ù ù ù ù ù ù ù ù ù ü ü ü ü ü ü ü ü ü ü ü † † † † † ¢ ¢ ¢ ¢ ¢ £ £ £ £ £ £ £ £ ¶ ¶ ¶ ¶ ¶ ß ß ß ß ® ® ® ® ® ® ® ® ™ ™ ™ ™ ™ ™ ™ ™ ¨ ¨ ¨ ¨ ¨ ¨ ¨ ¨ ¨ ≠ ≠ ≠ Ø Ø Ø Ø Ø Ø ∞ ∞ ∞ ∞ ∞ ± ± ± ± ± ± ± ± ± ± ± ≤ ≤ ≤ ≤ ≤ ≤ ≤ ≤ ¥ µ µ µ ∂ ∂ ∑ ∑ ∑ ∑ ∑ ∑ ∑ ∑ π ∫ ∫ ∫ ∫ ∫ ª ª º º º º Ω Ω Ω æ ø ø ø ø ¡ ¡ ¡ ¬ ¬ √ √ √ √ √ ƒ ƒ ƒ ƒ ≈ ≈ ≈ ≈ ≈ ∆ ∆ ∆ ∆ ∆ ∆ … …           À À À À À À Õ Õ Õ Õ Õ Œ Œ Œ Œ œ – – — — — — — — — — — — “ “ “ “ “ ’ ’ ÷ ÷ ÷ ÷ ÷ ◊ ◊ ◊ ◊ ÿ ÿ ÿ Ÿ Ÿ Ÿ Ÿ Ÿ Ÿ Ÿ Ÿ Ÿ Ÿ ⁄ ⁄ ⁄ € € € € € € € € › ﬁ ﬂ ﬂ ‡ ‡ ‡ ‡ · · · · ‚ ‚ ‚ ‚ ‚ „ „ „ „ „ Â Â Â Ê Ê Ê Ê Ê Ê Ê Ë Ë Ë Ë È Î Î Î Ï Ì Ì Ó Ó Ó Ó Ô Ô Ô Ô       Ô Ô Ó Ó Ú Û Û Ù Ù Ù Ù ı ı ı ı ı ı ı Ù Ù ˆ ˜ ˜ ¯ ¯ ¯ ¯ ¯ ˘ ˘ ˙ ˙ ˙ ˙ ˙ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ˚ ¸ ¸ ¸ ˝ ˝ ˝ ˝ ˝ ˛ ˛ ˇ ˇ ˇ   				
-
-
-
-
-
-
-		     !!""""""############%%%%%%%%&&&&((())))))*,,,-../////00111111122222222224444555555556888888888999::;;;;;<<<<<<>>>>>??@@@@@@BBBCCCCDFFFGHHIIIJJJKKKLLLMMMNNNOOOPPPQQQRRRSSSTTTUUUVVVWWWXXXYYYZZZ[[[\\\]]]]_____``aaaaacccddddggggwatches tonumber outputs removebasedir basedir set_breakpoint remove_breakpoint pairs require loadstring unpack breakpoints mobdebug params  Ä
-client  Ä
-options  Ä
-verbose ı	print Ë	file Á	line  Á	watch_idx  Á	_ ‚	_  ‚	command  ‚	done ñbreakpoint ì_ Ö_  Östatus  Ö_ A_  stream  size  size msg 
-_ _  size  msg 	_ m:_  :exp  :answer *_ %_  %watch_idx  %_ _  size  err file Sline  _  _  index    index exp  _ *Ã_  Ãexp  Ã_ 3_  _  file  lines  file  Kshortp lines !file 	params •err  •done ö_ ï_  ïstatus  ïlen  ïstatus 
-3res  3str /func ,err  ,_ E_  stream  size  size msg 
-res 	"  l v  	 	 	f 
- 
- 
-i v  opts jresp Y_ T_  Tstatus  Tres  Tfunc (err  (ok stack  
- 
- 
-_ frame  _ _  len  res 	_ O_  Ostream  Omode  Oresp ;err  ;_ )_  )status  )_ 5Q_  Qdir  Qremdir 6resp !err  !_ _  status  _ [_  spaces   <  µ+   7   > +  C  ?     ¿onmobdebug f  @ ¥+  1  C 0  Ä?     cocreate mobdebug f     "±	+      TÄ0 
-Ä+      TÄ4   7  ,   4   1 : G  G  VÄ¿ createcoroutine	cocreate mobdebug  <  »+   7   > +  C  ?    ¿onmobdebug f  K #«+    1  C 0  Ä? ¿  patched mobdebug self  f   õ  :¡+   C  =  7    TÄ  TÄ4   >7 1 : 0  ÄH      getmetatablerunmoconew mobdebug thread mt patched  ©  7Ω+      TÄ0 Ä+      TÄ+     TÄ+  7   ,   +      T Ä0 Ä+  1 :  G  G  G  XÄ¿¿ newmoconew MOAICoroutine mobdebug  "    ﬂ /  G  *Ä  step_into  3   ‰    TÄ,   +  H 2Ä     basedir b   ∏ [ v £“ Á4   4   TÄ1 % >3   T
-Ä7  TÄ4 7% >>  TÄ'Ï:% 4	 4
- 4 4   TÄ4 4 4	 4
- 4 7  TÄ4 4 4 74 74 74   TÄ4   % >  % >4  >  TÄ4  >74  > T	Ä7  TÄ 7% >  TÄ)    TÄ4 7   TÄ4 7!  TÄ4 7"  TÄ4 7#  TÄ4 7$  TÄ4 7%  TÄ4 7&  TÄ4 7'4 7(  TÄ1) 1* 1+ 0 Ä  TÄ7  TÄ7%, >  TÄ7%- >  TÄ%.  7/%0 >  TÄ) TÄ)   TÄ  TÄ7  TÄ7%1 >  TÄ42 73%4 >  TÄ) TÄ)  TÄ T	Ä42 73%5 >  TÄ) TÄ)   TÄ76  TÄ76>  %7 >* 2   !	 "  3#8 >!3!9 2"  2#  *$% '&  )'  )( ')  )* )+ ',  '-  *./ 20  31: 42; :2;1%2. %3< 14= 15> 16? >677@6:7@77A6:7A)7  :7B:17C 18D 19E 1:F 1;G 1<H 1=I 1>J 1?K 1@L 1AM 1BN 1CO 1DP 1EQ 1FR 1GS 1HT 1IU 1JV 1KW *LM 1NX 1OY 1PZ 1Q[ 1R\ 1S] 1T^ 1U_ )V  1W` )X  1Ya :9b::c:Od:Re:Qf:Ug:Kh:Ni:Sj:T6:Yk:Wl:Hm1Zo :Zn)Z  :Z%:Jp  TZÄ7Zr Z T[ÄZH :Zq)Z  :Zs1Zu :Zt0  ÄH  basedironscratch	exitonexitoutput 
-pause	done	coro	moaion
-startconnecthandlescratchpad	looplistenremovebreakpointsetbreakpoint                               linemap	dump	line   )execution aborted at default debugee
-print   RESTART
-WATCH
-STACK
-BREAK __modekbuiltins.scripts.socketoff/library
-/proc	openioDYLD_LIBRARY_PATH[Ww]indows
-matchOSWINDIR   	wrapstatus_status
-yield_yieldresume_resumecreate_createcoroutinengx	type__indexgetmetatableMOAICoroutinejit	_ENV_G	findsub	gsubstringrawgetunpack
-tablesetmetatable
-pairs	loadloadstringsetfenvgetfenv
-errorlcr	portMOBDEBUG_PORTtonumbergetenv yieldtimeout˚®∏Ω·ı—¸_DESCRIPTION<Mobile Remote Debugger for the Lua programming language
-_NAMEmobdebug_VERSION	0.70_COPYRIGHTPaul Kulchenkocheckcount»connecttimeout osrequire                         ! " # # # # $ % & ' ' ' ' ' ( ) ) ) ) ) ) 2 2 2 2 3 3 3 3 4 4 4 4 < < < < < < < < < = = = = = = = = = = = = = = = > > > > > > > > ? ? ? ? ? ? ? ? @ @ @ @ @ @ @ @ A A A A A A A A B B D D N O S S \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ] ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ d d d d d d d f f f g i i i i i j k l m o p q r s t u v w y z z z { | Å Ç ![binôÀ“ﬁÈÙ˚,–‚Ê˙*,f•ÈÌÒà∞∫ºœ“”‘’÷◊ÿŸ⁄€‹›ﬁﬂﬂ‡‡·‚‚‚‚‚‚‚„„‰‰ÊÊrequire ¢os úmobdebug çHOOKMASK åerror ãgetfenv äsetfenv âloadstring Öpairs Ñsetmetatable Étonumber Çunpack ˝rawget ¸gsub ˆsub  ˆfind  ˆgenv Újit ÓMOAICoroutine Ímetagindex 	·ngx “corocreate  cororesume ¬coroyield ∫corostatus ≤corowrap ∞findenv win ëmac |iscasepreserving osocket 
-ecoro_debugger dcoro_debugee  dcoroutines cevents ^breakpoints ]watches \lastsource [lastfile  [watchescnt Zabort Yseen_hook Xcheckcount Wstep_into Vstep_over Ustep_level Tstack_level Sserver Rbuf  Routputs Qiobase Nbasedir Mdeferror Ldebugee Kq Jserpent Hremovebasedir @stack ?set_breakpoint >remove_breakpoint =has_breakpoint <restore_vars ;capture_vars :stack_depth 9is_safe 8in_debugger 7is_pending 6readnext 5handle_breakpoint 4normalize_path 3debug_hook 2stringify_results 1isrunning 0done /debugger_loop .output -connect ,lasthost +lastport  +start *listen )controller (scratchpad 'loop &on %off $handle #cocreate "coro !moconew  moai   builtins.scripts.socket/builtins/scripts/socket.luac" 

@@ -3,6 +3,10 @@ fonts {
   name: "label"
   font: "/assets/fonts/label.font"
 }
+textures {
+  name: "objects"
+  texture: "/assets/objects.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0
@@ -42,7 +46,7 @@ nodes {
   }
   type: TYPE_TEXT
   blend_mode: BLEND_MODE_ALPHA
-  text: "DEFOLD"
+  text: "INGAME"
   font: "label"
   id: "debug_text"
   xanchor: XANCHOR_NONE
@@ -154,19 +158,19 @@ nodes {
   }
   size {
     x: 32.0
-    y: 32.0
+    y: 33.0
     z: 0.0
     w: 1.0
   }
   color {
     x: 1.0
     y: 1.0
-    z: 0.3019608
+    z: 0.6
     w: 1.0
   }
   type: TYPE_BOX
   blend_mode: BLEND_MODE_ALPHA
-  texture: ""
+  texture: "objects/koin"
   id: "coin_box"
   xanchor: XANCHOR_RIGHT
   yanchor: YANCHOR_BOTTOM
@@ -183,9 +187,9 @@ nodes {
   clipping_mode: CLIPPING_MODE_NONE
   clipping_visible: true
   clipping_inverted: false
-  alpha: 1.0
+  alpha: 0.88
   template_node_child: false
-  size_mode: SIZE_MODE_MANUAL
+  size_mode: SIZE_MODE_AUTO
 }
 nodes {
   position {

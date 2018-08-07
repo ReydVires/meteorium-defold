@@ -1,0 +1,42 @@
+go.property("speed", 200)
+
+local function set_angle(self)
+	local tab_angle = {
+		math.pi,
+		math.pi / 1.5,
+		math.pi / 2,
+		math.pi / 4,
+		math.pi * 2,
+		-math.pi / 4,
+		-math.pi / 2,
+		-math.pi / 1.5
+	}
+	local angle = math.random(1, #tab_angle)
+	go.set_rotation(vmath.quat_rotation_z(tab_angle[angle]))
+end
+
+local function moving(self, dt)
+	self.pos.x = self.pos.x + self.speed * dt
+	self.pos.y = self.pos.y - self.speed * dt
+	go.set_position(self.pos)
+end
+
+local function destroy_area(self)
+	if self.pos.x > 505 or self.pos.x < -25 then
+		go.delete()
+	elseif self.pos.y > 825 or self.pos.y < -25 then
+		go.delete()
+	end
+end
+
+function init(self)
+	print "meteor created"
+	self.pos = go.get_position()
+	self.rot = go.get_rotation()
+	set_angle(self)
+end
+
+function update(self, dt)
+	moving(self, dt)
+	destroy_area(self)
+end

@@ -63,7 +63,7 @@ function on_message(self, message_id, message, sender)
 			self.is_destroy = true
 			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")
-			sprite.set_constant("/go_rocket#sprite", "tint", vmath.vector4(1, 1, 1, 0))
+			go.animate("/go_rocket#sprite", "tint", go.PLAYBACK_ONCE_FORWARD, vmath.vector4(1, 1, 1, 0), go.EASING_LINEAR, 0.3)
 		end
 	end
 end

@@ -7,6 +7,9 @@ images {
 images {
   image: "/assets/sprites/get-point.png"
 }
+images {
+  image: "/assets/sprites/red_block.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

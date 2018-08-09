@@ -1,4 +1,5 @@
 go.property("speed", 180)
+local ROTATION_SPEED = 2
 
 local function set_angle(self)
 	-- table store angle
@@ -16,7 +17,17 @@ local function set_angle(self)
 	go.set_rotation(vmath.quat_rotation_z(tab_angle[angle]))
 end
 
+local function rotating(self, dt)
+	self.rot.z = self.rot.z + ROTATION_SPEED * dt
+	go.set_rotation(vmath.quat_rotation_z(self.rot.z))
+	-- over 360deg or -360deg, then reset to 0deg (in radian)
+	if self.rot.z > (math.pi * 2) and self.rot.z < -(math.pi * 2) then
+		self.rot.z = 0 -- reset rotation when 2 phi
+	end
+end
+
 local function moving(self, dt)
+	rotating(self, dt)
 	-- horizontal movement
 	if self.pick_from == "left" or self.pick_from == "right" then
 		if self.pick_from == "left" then
@@ -57,6 +68,7 @@ end
 
 function init(self)
 	--print "meteor created"
+	self.rot = go.get_rotation()
 	self.pos = go.get_position()
 	local diagonal_y = {
 		"left",
@@ -72,7 +84,7 @@ function init(self)
 	}
 	self.data_diagonal_y = diagonal_y[math.random(1,#diagonal_y)]
 	self.data_diagonal_x = diagonal_x[math.random(1,#diagonal_x)]
-	
+
 	set_angle(self)
 end
 

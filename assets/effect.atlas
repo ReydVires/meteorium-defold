@@ -4,6 +4,9 @@ images {
 images {
   image: "/assets/sprites/Star.png"
 }
+images {
+  image: "/assets/sprites/get-point.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

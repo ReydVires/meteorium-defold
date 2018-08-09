@@ -28,6 +28,21 @@ components {
     w: 0.70710677
   }
 }
+components {
+  id: "rocket_destroy_fx"
+  component: "/main/game/rocket_destroy_fx.particlefx"
+  position {
+    x: 11.0
+    y: 0.0
+    z: 0.0
+  }
+  rotation {
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    w: 1.0
+  }
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

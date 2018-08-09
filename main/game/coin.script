@@ -10,6 +10,9 @@ end
 function on_message(self, message_id, message, sender)
 	-- from rocket.script
 	if message_id == hash("get_coin") then
+		particlefx.play("#coin_fx")
+		score = score + 3
+		print "efect coin"
 		msg.post("#collisionobject", "disable")
 		go.animate(".", "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(1.5,1.5,1), go.EASING_LINEAR, 0.25, 0, function()
 			go.delete()

@@ -13,6 +13,14 @@ instances {
     z: 0.70710677
     w: 0.70710677
   }
+  component_properties {
+    id: "script"
+    properties {
+      id: "speed"
+      value: "0.018"
+      type: PROPERTY_TYPE_NUMBER
+    }
+  }
   scale3 {
     x: 1.0
     y: 1.0

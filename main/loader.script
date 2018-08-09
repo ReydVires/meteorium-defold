@@ -14,6 +14,7 @@ local function enable_menu(self, enable)
 	if enable then
 		msg.post(PROX.."menu", "enable")
 		msg.post("menu:/go_menu", "acquire_input_focus")
+		msg.post("menu:/go_menu", "on_enable") -- debug
 	else
 		msg.post(PROX.."menu", "disable")
 	end
@@ -30,7 +31,8 @@ end
 
 function init(self)
 	-- to make sure generate random number
-	math.randomseed(socket.gettime())
+	--math.randomseed(socket.gettime())
+	math.randomseed(os.time())
 	msg.post(".", "acquire_input_focus")
 	load_menu(self)
 end

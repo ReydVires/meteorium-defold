@@ -59,10 +59,11 @@ function on_message(self, message_id, message, sender)
 		if message.group == hash("meteor") and not self.is_destroy then
 			print "rocket damaged!"
 			particlefx.stop("#fire_trail")
+			particlefx.play("#rocket_destroy_fx")
 			self.is_destroy = true
 			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")
-			sprite.set_constant("/go_rocket#sprite", "tint", vmath.vector4(1, 1, 1, 0.5))
+			sprite.set_constant("/go_rocket#sprite", "tint", vmath.vector4(1, 1, 1, 0))
 		end
 	end
 end

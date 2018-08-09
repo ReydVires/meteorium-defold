@@ -1,7 +1,7 @@
 local action_id_back = hash("back")
 local action_id_esc = hash("esc")
-local TIME_BASE = 0.65
-local TIME_SPAWN = 0.5
+local TIME_BASE = 0.175
+local TIME_SPAWN = 0.95
 
 local function store_reset_data(self)
 	if score > highscore then
@@ -10,6 +10,23 @@ local function store_reset_data(self)
 	coin_saved = coin_saved + coin_collected
 	score = 0 -- reset score
 	coin_collected = 0 -- reset coin
+end
+
+local function reset_tick_meteor(self)
+	self.tick_meteor = 0.0
+end
+
+local function reset_tick_score(self)
+	self.tick_score = 0.0
+end
+
+local function score_everytick(self, dt, duration)
+	self.tick_score = self.tick_score + dt
+	if self.tick_score > duration then
+		score = score + 1
+		msg.post("/go_game#game", "score_update")
+		reset_tick_score(self)
+	end
 end
 
 local function generate_new_coin(self)
@@ -45,11 +62,27 @@ local function generate_new_meteor(self)
 	msg.post(instance_meteor, "set_move_dir", {spawn_from = pick_from})
 end
 
+local function create_meteor_everytick(self, dt, duration)
+	self.tick_meteor = self.tick_meteor + dt
+	if self.tick_meteor > duration then
+		generate_new_meteor(self)
+		reset_tick_meteor(self)
+	end
+end
+
 function init(self)
 	msg.post(".", "acquire_input_focus")
 	msg.post(".", "generate_coin")
-	msg.post(".", "generate_meteor")
-	msg.post(".", "loop_score_per_sec", {base = TIME_BASE})
+	--msg.post(".", "generate_meteor")
+	reset_tick_score(self)
+	reset_tick_meteor(self)
+end
+
+function update(self, dt)
+	if not self.game_end then
+		score_everytick(self, dt, TIME_BASE)
+		create_meteor_everytick(self, dt, TIME_SPAWN)
+	end
 end
 
 function on_message(self, message_id, message, sender)
@@ -66,13 +99,6 @@ function on_message(self, message_id, message, sender)
 		generate_new_meteor(self)
 		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, TIME_SPAWN, function()
 			msg.post(".", "generate_meteor")
-		end)
-	end
-	-- from this script
-	if message_id == hash("loop_score_per_sec") and not self.game_end then
-		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, message.base, function()
-			msg.post("/go_game#game", "score_update")
-			msg.post(".", "loop_score_per_sec", {base = TIME_BASE})
 		end)
 	end
 end

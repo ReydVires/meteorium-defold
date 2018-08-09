@@ -52,6 +52,15 @@ images {
 images {
   image: "/assets/sprites/button/button_pilihskin2.png"
 }
+images {
+  image: "/assets/sprites/roket_hidden.png"
+}
+images {
+  image: "/assets/sprites/button_trivia.png"
+}
+images {
+  image: "/assets/sprites/button_triviahidden.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

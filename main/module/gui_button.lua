@@ -13,7 +13,7 @@ local M = {}
 -- @param pressed_animation*
 -- @return Button instance
 function M.create(node, callback, btn_type, released_animation, pressed_animation)
-	local SOUND_CLICK = "loader:/go_audio#click" -- default sound effect
+	--local SOUND_CLICK = "loader:/go_audio#click" -- default sound effect
 	local button = {
 		pressed = false
 	}
@@ -34,9 +34,9 @@ function M.create(node, callback, btn_type, released_animation, pressed_animatio
 			-- uncoment following line if you want to add sound
 			-- must be located on main collection "sound" game object and "click" sound controller
 			--msg.post("loader:/go_audio#click", "play_sound") -- alternative way
-			if #SOUND_CLICK > 0 then
+			--[[if #SOUND_CLICK > 0 then
 				sound.play(SOUND_CLICK)
-			end
+			end]]
 			return true -- to check there is in this-button
 		-- mouse/finger released and button pressed?
 		elseif action.released and button.pressed then

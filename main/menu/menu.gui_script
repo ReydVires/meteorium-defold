@@ -1,6 +1,67 @@
+local Button = require "main.module.gui_button"
+
+local function create_sprite_button(node, released_animation, callback)
+	return Button.create(node, callback, "sprite", hash(released_animation), hash(released_animation.."2"))
+end
+
+local function menu_state(self)
+	if self.curr_menu_state == "goto_choose_rocket" then
+		gui.animate(gui.get_node("main_menu"), "position.x", -480, gui.EASING_INBACK, 0.6)
+		gui.animate(gui.get_node("rocket_list"), "position.x", -480, gui.EASING_OUTBACK, 0.6, 0.6, function()
+			self.btn_click_once = false
+		end)
+	elseif self.curr_menu_state == "goto_menu_via_choose_rocket" then
+		gui.animate(gui.get_node("rocket_list"), "position.x", 0, gui.EASING_INBACK, 0.6)
+		gui.animate(gui.get_node("main_menu"), "position.x", 0, gui.EASING_OUTBACK, 0.6, 0.6, function()
+			self.btn_click_once = false
+		end)
+	elseif self.curr_menu_state == "goto_astropedia" then
+		gui.animate(gui.get_node("main_menu"), "position.x", 480, gui.EASING_INBACK, 0.6)
+		gui.animate(gui.get_node("astronom"), "position.x", 480, gui.EASING_OUTBACK, 0.6, 0.6, function()
+			self.btn_click_once = false
+		end)
+	elseif self.curr_menu_state == "goto_menu_via_astro" then
+		gui.animate(gui.get_node("astronom"), "position.x", 0, gui.EASING_INBACK, 0.6)
+		gui.animate(gui.get_node("main_menu"), "position.x", 0, gui.EASING_OUTBACK, 0.6, 0.6, function()
+			self.btn_click_once = false
+		end)
+	elseif self.curr_menu_state == "goto_game" then
+		msg.post(".", "release_input_focus")
+		msg.post("loader:/go_loader#script", self.curr_menu_state)
+	else
+		print("wrong state input on menu_state()")
+	end
+end
+
 function init(self)
 	msg.post(".", "acquire_input_focus")
 	print "from init menu"
+	self.curr_menu_state = "goto_menu_init" -- just init to make back or esc key works
+	self.btn_click_once = false -- make sure it clicked once
+	self.play_btn = create_sprite_button(gui.get_node("start_btn"), "button_bermain", function()
+		self.curr_menu_state = "goto_game"
+		menu_state(self)
+	end)
+	self.choose_rocket_btn = create_sprite_button(gui.get_node("char_btn"), "button_pilihskin", function()
+		self.btn_click_once = true
+		self.curr_menu_state = "goto_choose_rocket"
+		menu_state(self)
+	end)
+	self.to_menu_btn = create_sprite_button(gui.get_node("to_menu_box"), "button_menuawal", function()
+		self.btn_click_once = true
+		self.curr_menu_state = "goto_menu_via_choose_rocket"
+		menu_state(self)
+	end)
+	self.astropedia_btn = create_sprite_button(gui.get_node("astroped_btn"), "button_astropedia", function()
+		self.btn_click_once = true
+		self.curr_menu_state = "goto_astropedia"
+		menu_state(self)
+	end)
+	self.to_menu_btn2 = create_sprite_button(gui.get_node("to_menu_box2"), "button_menuawal", function()
+		self.btn_click_once = true
+		self.curr_menu_state = "goto_menu_via_astro"
+		menu_state(self)
+	end)
 end
 
 function on_message(self, message_id, message, sender)
@@ -12,12 +73,20 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
-	if action_id == hash("touch") and action.pressed then
-		msg.post(".", "release_input_focus")
-		msg.post("loader:/go_loader#script", "goto_game")
+	self.play_btn.on_input(action_id, action)
+	if not self.btn_click_once then
+		self.choose_rocket_btn.on_input(action_id, action)
+		self.to_menu_btn.on_input(action_id, action)
+		self.to_menu_btn2.on_input(action_id, action)
+		self.astropedia_btn.on_input(action_id, action)
 	end
-	if action_id == hash("back") and action.pressed then
-		print "quit game"
-		msg.post("@system:", "exit", {code = 0})
+
+	if (action_id == hash("back") or action_id == hash("esc")) and action.pressed then
+		-- can quit if only if in goto_menu state
+		if string.sub(self.curr_menu_state, 1, 9) == "goto_menu" and
+		not self.btn_click_once then
+			print "quit game"
+			msg.post("@system:", "exit", {code = 0})
+		end
 	end
 end

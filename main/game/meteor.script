@@ -27,7 +27,6 @@ local function rotating(self, dt)
 end
 
 local function moving(self, dt)
-	rotating(self, dt)
 	-- horizontal movement
 	if self.pick_from == "left" or self.pick_from == "right" then
 		if self.pick_from == "left" then
@@ -90,6 +89,7 @@ end
 
 function update(self, dt)
 	moving(self, dt)
+	rotating(self, dt)
 	destroy_area(self)
 end
 

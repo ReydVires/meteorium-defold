@@ -55,6 +55,15 @@ images {
 images {
   image: "/assets/sprites/button/button_pilihroket2.png"
 }
+images {
+  image: "/assets/sprites/button/button_mainlagi.png"
+}
+images {
+  image: "/assets/sprites/button/button_mainlagi2.png"
+}
+images {
+  image: "/assets/sprites/trivia/judul_teks_trivia.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

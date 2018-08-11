@@ -64,6 +64,9 @@ function on_message(self, message_id, message, sender)
 			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")
 			go.animate("/go_rocket#sprite", "tint", go.PLAYBACK_ONCE_FORWARD, vmath.vector4(1, 1, 1, 0), go.EASING_LINEAR, 0.3)
+			go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, 0.5, function()
+				msg.post("/go_gameover#gameover", "show")
+			end)
 		end
 	end
 end

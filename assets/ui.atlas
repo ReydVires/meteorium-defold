@@ -1,10 +1,4 @@
 images {
-  image: "/assets/app_icons/icon_120.png"
-}
-images {
-  image: "/assets/app_icons/icon_48.png"
-}
-images {
   image: "/assets/sprites/button/button_astropedia.png"
 }
 images {
@@ -47,12 +41,6 @@ images {
   image: "/assets/sprites/button/button_pilih.png"
 }
 images {
-  image: "/assets/sprites/button/button_pilihskin.png"
-}
-images {
-  image: "/assets/sprites/button/button_pilihskin2.png"
-}
-images {
   image: "/assets/sprites/roket_hidden.png"
 }
 images {
@@ -60,6 +48,12 @@ images {
 }
 images {
   image: "/assets/sprites/button_triviahidden.png"
+}
+images {
+  image: "/assets/sprites/button/button_pilihroket.png"
+}
+images {
+  image: "/assets/sprites/button/button_pilihroket2.png"
 }
 margin: 2
 extrude_borders: 0

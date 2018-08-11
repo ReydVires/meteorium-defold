@@ -217,7 +217,7 @@ nodes {
   }
   type: TYPE_BOX
   blend_mode: BLEND_MODE_ALPHA
-  texture: "ui/button_pilihskin"
+  texture: "ui/button_pilihroket"
   id: "char_btn"
   xanchor: XANCHOR_RIGHT
   yanchor: YANCHOR_TOP

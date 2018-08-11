@@ -3,15 +3,6 @@ local action_id_esc = hash("esc")
 local TIME_BASE = 0.175
 local TIME_SPAWN = 0.95
 
-local function store_reset_data(self)
-	if score > highscore then
-		highscore = score
-	end
-	coin_saved = coin_saved + coin_collected
-	score = 0 -- reset score
-	coin_collected = 0 -- reset coin
-end
-
 local function reset_tick_meteor(self)
 	self.tick_meteor = 0.0
 end
@@ -57,7 +48,7 @@ local function generate_new_meteor(self)
 		meteor_pos.x = rand_pos_x
 	end
 	meteor_pos.z = 0.2
-	
+
 	local instance_meteor = factory.create("/go_game#meteor_factory", meteor_pos)
 	msg.post(instance_meteor, "set_move_dir", {spawn_from = pick_from})
 end
@@ -71,9 +62,11 @@ local function create_meteor_everytick(self, dt, duration)
 end
 
 function init(self)
-	msg.post(".", "acquire_input_focus")
 	msg.post(".", "generate_coin")
-	--msg.post(".", "generate_meteor")
+	-- set gameover.gui position
+	local gameover_gui_pos = go.get_position(go.get_id("go_gameover"))
+	gameover_gui_pos.x = 0
+
 	reset_tick_score(self)
 	reset_tick_meteor(self)
 end
@@ -100,14 +93,5 @@ function on_message(self, message_id, message, sender)
 		go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, TIME_SPAWN, function()
 			msg.post(".", "generate_meteor")
 		end)
-	end
-end
-
-function on_input(self, action_id, action)
-	if (action_id == action_id_esc or action_id == action_id_back) and action.pressed then
-		msg.post(".", "release_input_focus")
-		msg.post("/go_rocket", "release_input_focus")
-		msg.post("loader:/go_loader#script", "goto_menu")
-		store_reset_data(self)
 	end
 end

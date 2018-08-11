@@ -5,6 +5,8 @@ coin_saved = 0
 coin_collected = 0
 
 local PROX = "#proxy_"
+-- debug_json
+local json_db = sys.load_resource("/main/database/astropedia_db.json")
 
 local function load_menu(self)
 	msg.post(PROX.."menu", "load")
@@ -13,8 +15,7 @@ end
 local function enable_menu(self, enable)
 	if enable then
 		msg.post(PROX.."menu", "enable")
-		msg.post("menu:/go_menu", "acquire_input_focus")
-		msg.post("menu:/go_menu", "on_enable") -- debug
+		msg.post("menu:/go_menu", "on_enable")
 	else
 		msg.post(PROX.."menu", "disable")
 	end
@@ -32,6 +33,12 @@ end
 function init(self)
 	-- to make sure generate random number
 	--math.randomseed(socket.gettime())
+	-- debug_json
+	local astropedia_data = json.decode(json_db)
+	for i=1,#astropedia_data do
+		pprint(astropedia_data[i].description)
+	end
+
 	math.randomseed(os.time())
 	msg.post(".", "acquire_input_focus")
 	load_menu(self)

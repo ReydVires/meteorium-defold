@@ -1,0 +1,43 @@
+local Button = require "main.module.gui_button"
+
+local function create_sprite_button(node, released_animation, callback)
+	return Button.create(node, callback, "sprite", hash(released_animation), hash(released_animation.."2"))
+end
+
+local function store_reset_data(self)
+	if score > highscore then
+		highscore = score
+	end
+	coin_saved = coin_saved + coin_collected
+	score = 0 -- reset score
+	coin_collected = 0 -- reset coin
+end
+
+function init(self)
+  local node = gui.get_node("bg")
+  gui.set_enabled(node, false)
+  self.menu_btn = create_sprite_button(gui.get_node("menu_btn"), "button_menuawal", function()
+    local node = gui.get_node("bg")
+    gui.set_enabled(node, false)
+		msg.post(".", "release_input_focus") -- will return false in on_input()
+		msg.post("/go_game", "release_input_focus")
+		msg.post("loader:/go_loader#script", "goto_menu")
+		store_reset_data(self)
+  end)
+end
+
+function on_message(self, message_id, message, sender)
+  -- from rocket.script
+	if message_id == hash("show") then
+    -- show the gameover
+    local node = gui.get_node("bg")
+    gui.set_enabled(node, true)
+
+    msg.post(".", "acquire_input_focus")
+  end
+end
+
+function on_input(self, action_id, action)
+	self.menu_btn.on_input(action_id, action)
+  return true -- hold the input
+end

@@ -1,6 +1,7 @@
 [project]
 title = Meteorium
 version = 0.3
+custom_resources = main/database
 
 [bootstrap]
 main_collection = /main/loader.collectionc

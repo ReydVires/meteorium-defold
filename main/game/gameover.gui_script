@@ -5,12 +5,27 @@ local function create_sprite_button(node, released_animation, callback)
 end
 
 local function store_reset_data(self)
-	if score > highscore then
-		highscore = score
-	end
 	coin_saved = coin_saved + coin_collected
 	score = 0 -- reset score
 	coin_collected = 0 -- reset coin
+end
+
+local function updating_coin_collect(self)
+	local node = gui.get_node("coin_collect_text")
+	gui.set_text(node, coin_collected)
+end
+
+local function updating_score(self)
+	local node = gui.get_node("score_text")
+	gui.set_text(node, score)
+end
+
+local function set_highscore(self)
+	if score > highscore then
+		highscore = score
+	end
+	local node = gui.get_node("highscore_text")
+	gui.set_text(node, highscore)
 end
 
 function init(self)
@@ -29,6 +44,9 @@ end
 function on_message(self, message_id, message, sender)
   -- from rocket.script
 	if message_id == hash("show") then
+		updating_coin_collect(self)
+		updating_score(self)
+		set_highscore(self)
     -- show the gameover
     local node = gui.get_node("bg")
     gui.set_enabled(node, true)

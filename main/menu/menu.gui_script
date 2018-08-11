@@ -4,6 +4,11 @@ local function create_sprite_button(node, released_animation, callback)
 	return Button.create(node, callback, "sprite", hash(released_animation), hash(released_animation.."2"))
 end
 
+local function updating_coin(self)
+	local node = gui.get_node("coin_text")
+	gui.set_text(node, coin_saved)
+end
+
 local function menu_state(self)
 	if self.curr_menu_state == "goto_choose_rocket" then
 		gui.animate(gui.get_node("main_menu"), "position.x", -480, gui.EASING_INBACK, 0.6)
@@ -36,6 +41,7 @@ end
 
 function init(self)
 	msg.post(".", "acquire_input_focus")
+	updating_coin(self)
 	print "from init menu"
 	self.curr_menu_state = "goto_menu" -- just init to make back or esc key works
 	self.btn_click_once = false -- make sure it clicked once
@@ -73,6 +79,7 @@ function on_message(self, message_id, message, sender)
 		msg.post(".", "acquire_input_focus")
 		print("HIGHSCORE:",highscore)
 		print("COINS:",coin_saved)
+		updating_coin(self)
 	end
 end
 

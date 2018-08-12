@@ -81,11 +81,9 @@ local function random_size(min, max)
 	size_scale.x = val
 	size_scale.y = val
 	go.set_scale(size_scale)
-	print("scale",val)
 end
 
 function init(self)
-	--print "meteor created"
 	self.rot = go.get_rotation()
 	self.pos = go.get_position()
 	local diagonal_y = {

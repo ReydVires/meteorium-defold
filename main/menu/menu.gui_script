@@ -45,27 +45,146 @@ end
 
 local function buttons_astropedia(self, action_id, action)
 	for key, value in pairs(self.astropedias) do
-		if value.unlocked and not value.is_open then
+		if value.unlocked then
 			value.btn.on_input(action_id, action)
 		end
 	end
 end
 
+local function set_info_astropedia(self)
+	local name_text
+	local desc_text
+	if self.curr_obj_box == "trivial_1/box" then
+		name_text = astropedia_data[1].name
+		desc_text = astropedia_data[1].description
+	elseif self.curr_obj_box == "trivial_2/box" then
+		name_text = astropedia_data[2].name
+		desc_text = astropedia_data[2].description
+	elseif self.curr_obj_box == "trivial_3/box" then
+		name_text = astropedia_data[3].name
+		desc_text = astropedia_data[3].description
+	elseif self.curr_obj_box == "trivial_4/box" then
+		name_text = astropedia_data[4].name
+		desc_text = astropedia_data[4].description
+	elseif self.curr_obj_box == "trivial_5/box" then
+		name_text = astropedia_data[5].name
+		desc_text = astropedia_data[5].description
+	elseif self.curr_obj_box == "trivial_6/box" then
+		name_text = astropedia_data[6].name
+		desc_text = astropedia_data[6].description
+	end
+	gui.set_text(gui.get_node("title_panel"), name_text)
+	gui.set_text(gui.get_node("trivial_text"), desc_text)
+end
+
 local function show_astro_panel(self, enable)
 	local node = gui.get_node("trivia_panel")
+	local screen_y = 165
 	local pos_y
 	local ease
+	local obj_pos = vmath.vector3()
+	local box_pos = gui.get_position(gui.get_node(self.curr_obj_box))
+	local idx_box = string.sub(self.curr_obj_box, 9, 9)
+	-- make position of object and panel properly in pop up
 	if enable then
+		set_info_astropedia(self)
 		pos_y = 415
 		ease = gui.EASING_OUTBACK
+		obj_pos.x = (box_pos.x + 240) * -1
+		obj_pos.y = screen_y
+		if tonumber(idx_box) >= 4 then
+			obj_pos.y = screen_y * 2
+		end
 	else
-		pos_y = -228
+		pos_y = -295
 		ease = gui.EASING_INBACK
+		obj_pos.x = 0
+		obj_pos.y = 0
 	end
-	gui.animate(node, "position.y", pos_y, ease, 0.6, 0, function()
+	gui.animate(node, "position.y", pos_y, ease, 0.6)
+	gui.animate(self.curr_obj_node, "position", obj_pos, gui.EASING_INOUTCIRC, 0.75, 0, function()
 		self.btn_click_once = false
 	end)
 	self.panel_open = enable
+end
+
+local function init_astropedia(self)
+	local astro_callback = (function(node, box)
+		self.curr_obj_node = node
+		self.curr_obj_box = box
+		show_astro_panel(self, true)
+		self.btn_click_once = true
+	end)
+	self.astropedias = {
+		meteor = {
+			box = "trivial_1/box",
+			btn = create_scale_button(gui.get_node("trivial_1/box"), function()
+				astro_callback(self.astropedias.meteor.node, self.astropedias.meteor.box)
+			end),
+			unlocked = true,
+			node = gui.get_node("trivial_1/object_image")
+		},
+		rocket = {
+			box = "trivial_2/box",
+			btn = create_scale_button(gui.get_node("trivial_2/box"), function()
+				astro_callback(self.astropedias.rocket.node, self.astropedias.rocket.box)
+			end),
+			unlocked = false,
+			node = gui.get_node("trivial_2/object_image")
+		},
+		moon = {
+			box = "trivial_3/box",
+			btn = create_scale_button(gui.get_node("trivial_3/box"), function()
+				astro_callback(self.astropedias.moon.node, self.astropedias.moon.box)
+			end),
+			unlocked = false,
+			node = gui.get_node("trivial_3/object_image")
+		},
+		earth = {
+			box = "trivial_4/box",
+			btn = create_scale_button(gui.get_node("trivial_4/box"), function()
+				astro_callback(self.astropedias.earth.node, self.astropedias.earth.box)
+			end),
+			unlocked = false,
+			node = gui.get_node("trivial_4/object_image")
+		},
+		satellite = {
+			box = "trivial_5/box",
+			btn = create_scale_button(gui.get_node("trivial_5/box"), function()
+				astro_callback(self.astropedias.satellite.node, self.astropedias.satellite.box)
+			end),
+			unlocked = false,
+			node = gui.get_node("trivial_5/object_image")
+		},
+		sun = {
+			box = "trivial_6/box",
+			btn = create_scale_button(gui.get_node("trivial_6/box"), function()
+				astro_callback(self.astropedias.sun.node, self.astropedias.sun.box)
+			end),
+			unlocked = false,
+			node = gui.get_node("trivial_6/object_image")
+		}
+	}
+end
+
+local function unlock_astropedia(self, key_unlocked)
+	local data = self.astropedias[key_unlocked]
+	local box = data.box
+	data.unlocked = true
+	gui.set_texture(data.node, "objects") -- change texture first
+	gui.set_color(data.node, vmath.vector4(1,1,1,1))
+	gui.play_flipbook(gui.get_node(data.box), "button_trivia")
+	if key_unlocked == "rocket" then
+		gui.play_flipbook(data.node, "ikon_roketpedia")
+	elseif key_unlocked == "moon" then
+		gui.play_flipbook(data.node, "ikon_bulan")
+	elseif key_unlocked == "earth" then
+		gui.play_flipbook(data.node, "ikon_bumi")
+	elseif key_unlocked == "satellite" then
+		gui.play_flipbook(data.node, "ikon_satelit")
+	elseif key_unlocked == "sun" then
+		gui.play_flipbook(data.node, "ikon_matahari")
+	end
 end
 
 function init(self)
@@ -75,7 +194,15 @@ function init(self)
 	self.curr_menu_state = "goto_menu" -- just init to make back or esc key works
 	self.btn_click_once = false -- make sure it clicked once
 	self.panel_open = false -- initialization for panel astropedia
-	
+	self.curr_obj_node = nil -- initialization for object unlocked in astropedia
+	init_astropedia(self)
+	-- on_debug
+	unlock_astropedia(self, "rocket")
+	unlock_astropedia(self, "moon")
+	unlock_astropedia(self, "earth")
+	unlock_astropedia(self, "satellite")
+	unlock_astropedia(self, "sun")
+
 	self.play_btn = create_sprite_button(gui.get_node("start_btn"), "button_bermain", function()
 		self.btn_click_once = true
 		self.curr_menu_state = "goto_game"
@@ -107,36 +234,6 @@ function init(self)
 		show_astro_panel(self, false)
 	end)
 
-	local temp_callback = (function()
-		pprint("hi")
-	end)
-	self.astropedias = {
-		asteroid = {
-			btn = create_scale_button(gui.get_node("trivial_1/box"), function()
-				--self.astropedias.asteroid.is_open = true
-				show_astro_panel(self, true)
-				self.btn_click_once = true
-			end),
-			unlocked = true,
-			is_open = false
-		},
-		rocket = {
-			btn = create_scale_button(gui.get_node("trivial_2/box"), temp_callback),
-			unlocked = false,
-			is_open = false
-		},
-		moon = {
-			btn = create_scale_button(gui.get_node("trivial_3/box"), temp_callback),
-			unlocked = false,
-			is_open = false
-		},
-		earth = {
-			btn = create_scale_button(gui.get_node("trivial_4/box"), temp_callback),
-			unlocked = false,
-			is_open = false
-		}
-	}
-
 end
 
 function on_message(self, message_id, message, sender)
@@ -160,12 +257,13 @@ function on_input(self, action_id, action)
 		else
 			if not self.panel_open then
 				self.to_menu_btn2.on_input(action_id, action)
+				buttons_astropedia(self, action_id, action)
 			end
 			self.play_btn.on_input(action_id, action)
 			self.choose_rocket_btn.on_input(action_id, action)
 			self.to_menu_btn.on_input(action_id, action)
 			self.astropedia_btn.on_input(action_id, action)
-			buttons_astropedia(self, action_id, action)
+			--buttons_astropedia(self, action_id, action)
 			self.confirm_btn.on_input(action_id, action)
 		end
 	end

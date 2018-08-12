@@ -1,11 +1,35 @@
 images {
-  image: "/assets/sprites/ikon_roket.png"
+  image: "/assets/sprites/ikon/ikon_roket.png"
 }
 images {
   image: "/assets/sprites/koin.png"
 }
 images {
-  image: "/assets/sprites/ikon_asteroid.png"
+  image: "/assets/sprites/ikon/ikon_asteroid.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_bulan.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_bumi.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_roket.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_asteroid.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_matahari.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_meteorid.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_satelit.png"
+}
+images {
+  image: "/assets/sprites/ikon/ikon_roketpedia.png"
 }
 margin: 2
 extrude_borders: 0

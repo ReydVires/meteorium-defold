@@ -1,17 +1,25 @@
 [{
-  "id": "asteroid",
-  "name": "Asteroid",
-  "description": "Asteroid adalah benda berukuran lebih kecil daripada planet, tetapi lebih besar daripada meteorid."
+  "id": "meteor",
+  "name": "Meteor",
+  "description": "[Asteroid] adalah benda berukuran lebih kecil daripada\nplanet, tetapi lebih besar daripada meteorid."
 }, {
   "id": "rocket",
   "name": "Roket",
-  "description": "Penggunaan roket secara intensif untuk militer, industri dan ilmu pengetahuan dimulai pada awal abad ke-20, di mana teknologi peroketan mampu mengantarkan umat manusia menuju Era ruang angkasa, termasuk mengantarkan manusia menginjakan kakinya ke bulan."
+  "description": "Penggunaan roket secara intensif untuk militer,\nindustri, dan ilmu pengetahuan dimulai pada awal\nabad ke-20, di mana teknologi peroketan mampu\nmengantarkan numat manusia menuju Era ruang\nangkasa, termasuk mengantarkan manusia\nmenginjakan kakinya ke bulan."
 }, {
   "id": "moon",
   "name": "Bulan",
-  "description": "Bulan adalah satelit alami Bumi satu-satunya dan merupakan bulan terbesar kelima dalam Tata Surya."
+  "description": "Bulan adalah satelit alami Bumi satu-satunya dan\nmerupakan bulan terbesar kelima dalam Tata Surya."
 }, {
   "id": "earth",
   "name": "Bumi",
-  "description": "Bumi adalah planet ketiga dari Matahari yang merupakan planet terpadat dan terbesar kelima dari delapan planet dalam Tata Surya."
+  "description": "Bumi adalah planet ketiga dari Matahari yang\nmerupakan planet terpadat dan terbesar kelima\ndari delapan planet dalam Tata Surya."
+}, {
+  "id": "satellite",
+  "name": "Satelit",
+  "description": "Satelit [adalah planet ketiga dari Matahari yang\nmerupakan planet terpadat dan terbesar kelima\ndari delapan planet dalam Tata Surya.]"
+}, {
+  "id": "sun",
+  "name": "Matahari",
+  "description": "[Matahari adalah planet ketiga dari Matahari yang\nmerupakan planet terpadat dan terbesar kelima\ndari delapan planet dalam Tata Surya.]"
 }]

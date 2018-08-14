@@ -25,20 +25,36 @@ local function set_rot(self, action)
 	--print("in degree",math.deg(self.rot.z))
 end
 
+local function particle_control(enable)
+	local url = "#fire_trail" -- auto-handler
+	if curr_rocket == 2 then
+		url = "#fire2_trail"
+	elseif curr_rocket == 3 then
+		url = "#fire3_trail"
+	elseif curr_rocket == 4 then
+		url = "#fire4_trail"
+	end
+	if enable then
+		particlefx.play(url)
+	else
+		particlefx.stop(url)
+	end
+end
+
 local function rocket_move(self, action_id, action)
 	if self.game_start and action_id == action_id_touch then
 		if action.pressed then
-			particlefx.play("#fire_trail")
+			particle_control(true)
 		end
 		set_pos(self, action)
 		set_rot(self, action)
 		if action.released then
-			print "do slide"
-			particlefx.stop("#fire_trail")
+			--print "to do slide"
+			particle_control(false)
 		end
 	elseif not self.game_start and action_id == action_id_touch and action.pressed then
 		self.game_start = true
-		particlefx.play("#fire_trail")
+		particle_control(true)
 	end
 end
 

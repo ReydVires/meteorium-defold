@@ -16,7 +16,7 @@ background_color {
 nodes {
   position {
     x: 240.0
-    y: 830.0
+    y: 850.0
     z: 0.0
     w: 1.0
   }
@@ -50,7 +50,7 @@ nodes {
   font: "label"
   id: "debug_text"
   xanchor: XANCHOR_NONE
-  yanchor: YANCHOR_NONE
+  yanchor: YANCHOR_TOP
   pivot: PIVOT_CENTER
   outline {
     x: 0.9019608

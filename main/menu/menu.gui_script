@@ -246,7 +246,7 @@ local function init_rocket_market(self)
 				selecting_rocket(self, 1)
 			end)
 		},{
-			price = 15, -- 15
+			price = 0, -- 15
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_2/rocket_box"), function()
@@ -257,7 +257,7 @@ local function init_rocket_market(self)
 				end
 			end)
 		},{
-			price = 50, -- 50
+			price = 0, -- 50
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_3/rocket_box"), function()
@@ -268,7 +268,7 @@ local function init_rocket_market(self)
 				end
 			end)
 		},{
-			price = 100, -- 100
+			price = 0, -- 100
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_4/rocket_box"), function()

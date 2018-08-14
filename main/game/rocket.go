@@ -43,6 +43,51 @@ components {
     w: 1.0
   }
 }
+components {
+  id: "fire2_trail"
+  component: "/main/game/fire2_trail.particlefx"
+  position {
+    x: -16.0
+    y: 0.0
+    z: 0.0
+  }
+  rotation {
+    x: 0.0
+    y: 0.0
+    z: 0.70710677
+    w: 0.70710677
+  }
+}
+components {
+  id: "fire4_trail"
+  component: "/main/game/fire4_trail.particlefx"
+  position {
+    x: -16.0
+    y: 0.0
+    z: 0.0
+  }
+  rotation {
+    x: 0.0
+    y: 0.0
+    z: 0.70710677
+    w: 0.70710677
+  }
+}
+components {
+  id: "fire3_trail"
+  component: "/main/game/fire3_trail.particlefx"
+  position {
+    x: -16.0
+    y: 0.0
+    z: 0.0
+  }
+  rotation {
+    x: 0.0
+    y: 0.0
+    z: 0.70710677
+    w: 0.70710677
+  }
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

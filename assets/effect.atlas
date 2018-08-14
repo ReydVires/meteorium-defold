@@ -10,6 +10,12 @@ images {
 images {
   image: "/assets/sprites/red_block.png"
 }
+images {
+  image: "/assets/sprites/blue_block.png"
+}
+images {
+  image: "/assets/sprites/yell_fx.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

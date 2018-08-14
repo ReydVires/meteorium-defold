@@ -1,7 +1,7 @@
 emitters {
   id: "emitter"
   mode: PLAY_MODE_LOOP
-  duration: 2.5
+  duration: 1.0
   space: EMISSION_SPACE_WORLD
   position {
     x: 0.0
@@ -15,19 +15,19 @@ emitters {
     w: 1.0
   }
   tile_source: "/assets/effect.atlas"
-  animation: "p_tambah"
+  animation: "yell_fx"
   material: "/builtins/materials/particlefx.material"
   blend_mode: BLEND_MODE_ADD
   particle_orientation: PARTICLE_ORIENTATION_DEFAULT
   inherit_velocity: 0.0
-  max_particle_count: 100
+  max_particle_count: 50
   type: EMITTER_TYPE_2DCONE
   start_delay: 0.25
   properties {
     key: EMITTER_KEY_SPAWN_RATE
     points {
       x: 0.0
-      y: 45.0
+      y: 35.0
       t_x: 1.0
       t_y: 0.0
     }
@@ -87,7 +87,7 @@ emitters {
     key: EMITTER_KEY_PARTICLE_SIZE
     points {
       x: 0.0
-      y: 15.0
+      y: 20.0
       t_x: 1.0
       t_y: 0.0
     }
@@ -107,7 +107,7 @@ emitters {
     key: EMITTER_KEY_PARTICLE_GREEN
     points {
       x: 0.0
-      y: 0.5
+      y: 1.0
       t_x: 1.0
       t_y: 0.0
     }
@@ -137,7 +137,7 @@ emitters {
     key: EMITTER_KEY_PARTICLE_ROTATION
     points {
       x: 0.0
-      y: 45.0
+      y: 0.0
       t_x: 1.0
       t_y: 0.0
     }
@@ -203,19 +203,19 @@ emitters {
     key: PARTICLE_KEY_ALPHA
     points {
       x: 0.0
-      y: 0.47368422
+      y: 0.0
       t_x: 0.07194582
       t_y: 0.99740857
     }
     points {
-      x: 0.056413654
-      y: 1.6243535
+      x: 0.11320755
+      y: 0.99277455
       t_x: 0.99418455
       t_y: 0.10768964
     }
     points {
-      x: 0.7918653
-      y: 0.3977613
+      x: 0.7112546
+      y: 0.555656
       t_x: 0.5694311
       t_y: -0.82203907
     }

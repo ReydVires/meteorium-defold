@@ -44,6 +44,7 @@ end
 
 function init(self)
 	msg.post(".", "acquire_input_focus")
+	msg.post(".", "change_rocket")
 	self.game_start = false
 	self.pos = go.get_position()
 	self.rot = go.get_rotation()
@@ -54,7 +55,6 @@ function on_message(self, message_id, message, sender)
 	if message_id == hash("collision_response") then
 		if message.group == hash("coin") then
 			msg.post(message.other_id, "get_coin")
-			--pprint(message)
 		end
 		if message.group == hash("meteor") and not self.is_destroy then
 			print "rocket damaged!"
@@ -68,6 +68,18 @@ function on_message(self, message_id, message, sender)
 				msg.post("/go_gameover#gameover", "show")
 			end)
 		end
+	end
+	if message_id == hash("change_rocket") then
+		if curr_rocket == 1 then
+			sprite.play_flipbook("#sprite", "ikon_roket")
+		elseif curr_rocket == 2 then
+			sprite.play_flipbook("#sprite", "roket2")
+		elseif curr_rocket == 3 then
+			sprite.play_flipbook("#sprite", "roket3")
+		elseif curr_rocket == 4 then
+			sprite.play_flipbook("#sprite", "roket4")
+		end
+		print("rocket is set to", curr_rocket)
 	end
 end
 

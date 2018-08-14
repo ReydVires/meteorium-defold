@@ -31,6 +31,15 @@ images {
 images {
   image: "/assets/sprites/ikon/ikon_roketpedia.png"
 }
+images {
+  image: "/assets/sprites/rocket/roket2.png"
+}
+images {
+  image: "/assets/sprites/rocket/roket3.png"
+}
+images {
+  image: "/assets/sprites/rocket/roket4.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

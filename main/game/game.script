@@ -1,6 +1,6 @@
 local action_id_back = hash("back")
 local action_id_esc = hash("esc")
-local TIME_BASE = 0.175
+local TIME_BASE = 0.15
 local TIME_SPAWN = 0.95
 
 local function reset_tick_meteor(self)
@@ -11,12 +11,43 @@ local function reset_tick_score(self)
 	self.tick_score = 0.0
 end
 
+local function unlock_achivement(self)
+	local data_unlocked
+	if score >= 50 and not unlocked_astro[2] then -- 300
+		data_unlocked = "sun"
+		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
+		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
+		unlocked_astro[2] = true
+	elseif score >= 100 and not unlocked_astro[3] then -- 450
+		data_unlocked = "moon"
+		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
+		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
+		unlocked_astro[3] = true
+	elseif score >= 600 and not unlocked_astro[4] then
+		data_unlocked = "earth"
+		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
+		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
+		unlocked_astro[4] = true
+	elseif score >= 800 and not unlocked_astro[5] then
+		data_unlocked = "rocket"
+		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
+		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
+		unlocked_astro[5] = true
+	elseif score >= 1000 and not unlocked_astro[6] then
+		data_unlocked = "satellite"
+		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
+		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
+		unlocked_astro[6] = true
+	end
+end
+
 local function score_everytick(self, dt, duration)
 	self.tick_score = self.tick_score + dt
 	if self.tick_score > duration then
 		score = score + 1
 		msg.post("/go_game#game", "score_update")
 		reset_tick_score(self)
+		unlock_achivement(self) -- on_debug
 	end
 end
 
@@ -63,6 +94,7 @@ end
 
 function init(self)
 	msg.post(".", "generate_coin")
+	print("GC: " .. collectgarbage("count") * 1024) -- on_debug
 	-- set gameover.gui position
 	local gameover_gui_pos = go.get_position(go.get_id("go_gameover"))
 	gameover_gui_pos.x = 0

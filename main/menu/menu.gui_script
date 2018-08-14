@@ -8,7 +8,7 @@ local function create_scale_button(node, callback)
 	return Button.create(node, callback)
 end
 
-local function updating_coin(self)
+local function updating_coin()
 	local node = gui.get_node("coin_text")
 	gui.set_text(node, coin_saved)
 end
@@ -187,6 +187,101 @@ local function unlock_astropedia(self, key_unlocked)
 	end
 end
 
+local function unlock_rocket(self, num_rocket_unlocked)
+	if not self.rockets[num_rocket_unlocked].is_sold then
+		coin_saved = coin_saved - self.rockets[num_rocket_unlocked].price
+		updating_coin(self)
+		self.rockets[num_rocket_unlocked].is_sold = true
+		local node = gui.get_node("rocket_"..num_rocket_unlocked.."/price_btn")
+		gui.play_flipbook(node, "button_pilih")
+		node = gui.get_node("rocket_"..num_rocket_unlocked.."/price_text")
+		gui.set_text(node, "")
+		node = gui.get_node("rocket_"..num_rocket_unlocked.."/coin_icon")
+		gui.set_color(node, vmath.vector4(1, 1, 1, 0))
+		print("rocket",num_rocket_unlocked,"purchased")
+	end
+end
+
+local function button_rockets(self, action_id, action)
+	for key, val in pairs(self.rockets) do
+		if not val.selected and (coin_saved >= val.price or val.is_sold) then
+			val.btn.on_input(action_id, action)
+		end
+	end
+end
+
+local function selecting_rocket(self, selected_rocket)
+	for i = 1, #self.rockets do
+		if i ~= selected_rocket then
+			self.rockets[i].selected = false
+			if self.rockets[i].is_sold then
+				local node = gui.get_node("rocket_"..i.."/price_btn")
+				gui.play_flipbook(node, "button_pilih")
+			end
+		else
+			self.rockets[selected_rocket].selected = true
+			local node = gui.get_node("rocket_"..selected_rocket.."/price_btn")
+			gui.play_flipbook(node, "button_dipilih")
+			print("selected rocket",selected_rocket)
+			curr_rocket = selected_rocket
+			node = gui.get_node("mascot")
+			-- setting diplay rocket in menu
+			if selected_rocket >=2 then
+				gui.play_flipbook(node, "roket"..selected_rocket)
+			else
+				gui.play_flipbook(node, "ikon_roket")
+			end
+		end
+	end
+end
+
+-- on_debug
+local function init_rocket_market(self)
+	self.rockets = {
+		{
+			price = 0,
+			is_sold = true,
+			selected = true,
+			btn = create_scale_button(gui.get_node("rocket_1/rocket_box"), function()
+				selecting_rocket(self, 1)
+			end)
+		},{
+			price = 15, -- 15
+			is_sold = false,
+			selected = false,
+			btn = create_scale_button(gui.get_node("rocket_2/rocket_box"), function()
+				if self.rockets[2].is_sold then
+					selecting_rocket(self, 2)
+				else
+					unlock_rocket(self, 2)
+				end
+			end)
+		},{
+			price = 50, -- 50
+			is_sold = false,
+			selected = false,
+			btn = create_scale_button(gui.get_node("rocket_3/rocket_box"), function()
+				if self.rockets[3].is_sold then
+					selecting_rocket(self, 3)
+				else
+					unlock_rocket(self, 3)
+				end
+			end)
+		},{
+			price = 100, -- 100
+			is_sold = false,
+			selected = false,
+			btn = create_scale_button(gui.get_node("rocket_4/rocket_box"), function()
+				if self.rockets[4].is_sold then
+					selecting_rocket(self, 4)
+				else
+					unlock_rocket(self, 4)
+				end
+			end)
+		}
+	}
+end
+
 function init(self)
 	msg.post(".", "acquire_input_focus")
 	updating_coin(self)
@@ -196,12 +291,7 @@ function init(self)
 	self.panel_open = false -- initialization for panel astropedia
 	self.curr_obj_node = nil -- initialization for object unlocked in astropedia
 	init_astropedia(self)
-	-- on_debug
-	unlock_astropedia(self, "rocket")
-	unlock_astropedia(self, "moon")
-	unlock_astropedia(self, "earth")
-	unlock_astropedia(self, "satellite")
-	unlock_astropedia(self, "sun")
+	init_rocket_market(self)
 
 	self.play_btn = create_sprite_button(gui.get_node("start_btn"), "button_bermain", function()
 		self.btn_click_once = true
@@ -245,6 +335,10 @@ function on_message(self, message_id, message, sender)
 		print("COINS:",coin_saved)
 		updating_coin(self)
 	end
+	-- from game.script
+	if message_id == hash("unlock_astropedia") then
+		unlock_astropedia(self, message.unlocked)
+	end
 end
 
 function on_input(self, action_id, action)
@@ -263,7 +357,7 @@ function on_input(self, action_id, action)
 			self.choose_rocket_btn.on_input(action_id, action)
 			self.to_menu_btn.on_input(action_id, action)
 			self.astropedia_btn.on_input(action_id, action)
-			--buttons_astropedia(self, action_id, action)
+			button_rockets(self, action_id, action) -- on_debug
 			self.confirm_btn.on_input(action_id, action)
 		end
 	end

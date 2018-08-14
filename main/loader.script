@@ -1,9 +1,12 @@
 --GLOBAL VARIABLE
-highscore = 0
-score = 0
-coin_saved = 0
-coin_collected = 0
+highscore = 0 -- saved
+score = 0 -- current in-game
+coin_saved = 0 -- saved
+coin_collected = 0 -- current in-game
 astropedia_data = nil -- for storing data json (decoded)
+curr_rocket = 1 -- for rocket selected
+unlocked_rocket = {1, 0, 0, 0} -- unlocked rocket
+unlocked_astro = {true, false, false, false, false, false} -- unlocked astropedia
 
 local PROX = "#proxy_"
 -- debug_json

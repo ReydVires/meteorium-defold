@@ -56,7 +56,7 @@ function M.create(node, callback, btn_type, released_animation, pressed_animatio
 		local type
 		if not btn_type then
 			type = SCALE_TYPE
-			print "auto assign: scale btn-type"
+			--print "auto assign: scale btn-type"
 		elseif btn_type == SCALE2_TYPE then
 			type = SCALE2_TYPE
 			PRESSED_BUTTON_SCALE = vmath.vector3(0.9)

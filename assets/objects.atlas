@@ -40,6 +40,21 @@ images {
 images {
   image: "/assets/sprites/rocket/roket4.png"
 }
+images {
+  image: "/assets/sprites/trash_coin/puing1.png"
+}
+images {
+  image: "/assets/sprites/trash_coin/puing2.png"
+}
+images {
+  image: "/assets/sprites/trash_coin/puing3.png"
+}
+images {
+  image: "/assets/sprites/trash_coin/puing4.png"
+}
+images {
+  image: "/assets/sprites/trash_coin/puing5.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

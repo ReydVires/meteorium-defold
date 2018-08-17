@@ -1,3 +1,19 @@
+local function set_icon(self, icon_name)
+	local node = gui.get_node("icon_box")
+	if icon_name == "sun" then
+		icon_name = "ikon_matahari"
+	elseif icon_name == "moon" then
+		icon_name = "ikon_bulan"
+	elseif icon_name == "earth" then
+		icon_name = "ikon_bumi"
+	elseif icon_name == "rocket" then
+		icon_name = "ikon_roketpedia"
+	elseif icon_name == "satellite" then
+		icon_name = "ikon_satelit"
+	end
+	gui.play_flipbook(node, icon_name)
+end
+
 function init(self)
 	self.score_text = gui.get_node("score_text")
 	self.coin_text = gui.get_node("coin_text")
@@ -8,17 +24,11 @@ end
 function on_message(self, message_id, message, sender)
 	-- from game.script
 	if message_id == hash("achivement_update") then
-		local node = gui.get_node("debug_text")
-		local text
-		for i,v in ipairs(astropedia_data) do
-			if v.id == message.data then
-				text = string.upper(v.name)
-			end
-		end
-		gui.set_text(node, "DAPAT "..text.."!")
+		local node = gui.get_node("achv_box")
 		gui.animate(node, "position.y", 750, gui.EASING_OUTBACK, 0.4, 0, function()
-			gui.animate(node, "position.y", 850, gui.EASING_INBACK, 0.5, 2)
+			gui.animate(node, "position.y", 870, gui.EASING_INBACK, 0.5, 2)
 		end)
+		set_icon(self, message.data)
 		print("unlocked",message.data)
 	end
 	-- from coin.script

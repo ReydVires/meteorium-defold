@@ -1,4 +1,5 @@
 local Button = require "main.module.gui_button"
+local Urls = require "main.module.msg_url"
 
 local function create_sprite_button(node, released_animation, callback)
 	return Button.create(node, callback, "sprite", hash(released_animation), hash(released_animation.."2"))
@@ -37,7 +38,8 @@ local function menu_state(self)
 	elseif self.curr_menu_state == "goto_game" then
 		self.btn_click_once = false
 		msg.post(".", "release_input_focus")
-		msg.post("loader:/go_loader#script", self.curr_menu_state)
+		-- on_debug check module
+		msg.post(Urls.my_url("loader:/go_loader#script"), self.curr_menu_state)
 	else
 		print("wrong state input on menu_state()")
 	end
@@ -77,6 +79,41 @@ local function set_info_astropedia(self)
 	gui.set_text(gui.get_node("trivial_text"), desc_text)
 end
 
+-- setting switch between icon and trivia image
+local function set_icon_trivia(self, idx_box, enable)
+	local prefix
+	local sufix
+	if not enable then
+		gui.set_texture(self.curr_obj_node, "objects")
+		prefix = "ikon_"
+		gui.set_layer(self.curr_obj_node, "bot")
+		gui.set_layer(gui.get_node("trivia_panel"), "top")
+	else
+		gui.set_texture(self.curr_obj_node, "trivia")
+		prefix = "trivia_"
+		gui.set_layer(self.curr_obj_node, "top")
+		gui.set_layer(gui.get_node("trivia_panel"), "bot")
+	end
+	if idx_box == 1 then
+		sufix = "meteorid"
+	elseif idx_box == 2 then
+		if not enable then
+			sufix = "roketpedia"
+		else
+			sufix = "roket"
+		end
+	elseif idx_box == 3 then
+		sufix = "bulan"
+	elseif idx_box == 4 then
+		sufix = "bumi"
+	elseif idx_box == 5 then
+		sufix = "satelit"
+	elseif idx_box == 6 then
+		sufix = "matahari"
+	end
+	gui.play_flipbook(self.curr_obj_node, prefix..sufix)
+end
+
 local function show_astro_panel(self, enable)
 	local node = gui.get_node("trivia_panel")
 	local screen_y = 165
@@ -84,7 +121,7 @@ local function show_astro_panel(self, enable)
 	local ease
 	local obj_pos = vmath.vector3()
 	local box_pos = gui.get_position(gui.get_node(self.curr_obj_box))
-	local idx_box = string.sub(self.curr_obj_box, 9, 9)
+	local idx_box = tonumber(string.sub(self.curr_obj_box, 9, 9))
 	-- make position of object and panel properly in pop up
 	if enable then
 		set_info_astropedia(self)
@@ -92,7 +129,7 @@ local function show_astro_panel(self, enable)
 		ease = gui.EASING_OUTBACK
 		obj_pos.x = (box_pos.x + 240) * -1
 		obj_pos.y = screen_y
-		if tonumber(idx_box) >= 4 then
+		if idx_box >= 4 then
 			obj_pos.y = screen_y * 2
 		end
 	else
@@ -101,9 +138,14 @@ local function show_astro_panel(self, enable)
 		obj_pos.x = 0
 		obj_pos.y = 0
 	end
+	-- make it shrink first then action after view
+	if not enable then
+		set_icon_trivia(self, idx_box, enable)
+	end
 	gui.animate(node, "position.y", pos_y, ease, 0.6)
 	gui.animate(self.curr_obj_node, "position", obj_pos, gui.EASING_INOUTCIRC, 0.75, 0, function()
 		self.btn_click_once = false
+		set_icon_trivia(self, idx_box, enable)
 	end)
 	self.panel_open = enable
 end
@@ -187,10 +229,13 @@ local function unlock_astropedia(self, key_unlocked)
 	end
 end
 
-local function unlock_rocket(self, num_rocket_unlocked)
+local function unlock_rocket(self, num_rocket_unlocked, init)
 	if not self.rockets[num_rocket_unlocked].is_sold then
-		coin_saved = coin_saved - self.rockets[num_rocket_unlocked].price
-		updating_coin(self)
+		-- make init not decrease coin again
+		if not init then
+			coin_saved = coin_saved - self.rockets[num_rocket_unlocked].price
+			updating_coin(self)
+		end
 		self.rockets[num_rocket_unlocked].is_sold = true
 		local node = gui.get_node("rocket_"..num_rocket_unlocked.."/price_btn")
 		gui.play_flipbook(node, "button_pilih")
@@ -198,6 +243,8 @@ local function unlock_rocket(self, num_rocket_unlocked)
 		gui.set_text(node, "")
 		node = gui.get_node("rocket_"..num_rocket_unlocked.."/coin_icon")
 		gui.set_color(node, vmath.vector4(1, 1, 1, 0))
+		unlocked_rocket[num_rocket_unlocked] = true -- saving in global var
+		msg.post("loader:/go_loader#script", "save_game") -- saving game data
 		print("rocket",num_rocket_unlocked,"purchased")
 	end
 end
@@ -210,7 +257,17 @@ local function button_rockets(self, action_id, action)
 	end
 end
 
-local function selecting_rocket(self, selected_rocket)
+local function set_mascot()
+	local node = gui.get_node("mascot")
+	-- setting diplay rocket in menu
+	if curr_rocket >=2 then
+		gui.play_flipbook(node, "roket"..curr_rocket)
+	else
+		gui.play_flipbook(node, "ikon_roket")
+	end
+end
+
+local function selecting_rocket(self, selected_rocket, init)
 	for i = 1, #self.rockets do
 		if i ~= selected_rocket then
 			self.rockets[i].selected = false
@@ -224,13 +281,12 @@ local function selecting_rocket(self, selected_rocket)
 			gui.play_flipbook(node, "button_dipilih")
 			print("selected rocket",selected_rocket)
 			curr_rocket = selected_rocket
-			node = gui.get_node("mascot")
-			-- setting diplay rocket in menu
-			if selected_rocket >=2 then
-				gui.play_flipbook(node, "roket"..selected_rocket)
-			else
-				gui.play_flipbook(node, "ikon_roket")
+			-- make init not saving again
+			if not init then
+				msg.post("loader:/go_loader#script", "save_game") -- saving game data
 			end
+			-- setting diplay rocket in menu
+			set_mascot()
 		end
 	end
 end
@@ -246,7 +302,7 @@ local function init_rocket_market(self)
 				selecting_rocket(self, 1)
 			end)
 		},{
-			price = 0, -- 15
+			price = 100,
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_2/rocket_box"), function()
@@ -257,7 +313,7 @@ local function init_rocket_market(self)
 				end
 			end)
 		},{
-			price = 0, -- 50
+			price = 250,
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_3/rocket_box"), function()
@@ -268,7 +324,7 @@ local function init_rocket_market(self)
 				end
 			end)
 		},{
-			price = 0, -- 100
+			price = 600,
 			is_sold = false,
 			selected = false,
 			btn = create_scale_button(gui.get_node("rocket_4/rocket_box"), function()
@@ -292,6 +348,39 @@ function init(self)
 	self.curr_obj_node = nil -- initialization for object unlocked in astropedia
 	init_astropedia(self)
 	init_rocket_market(self)
+
+	-- IMPLEMENT LOADED GAME
+	for i, v in ipairs(self.rockets) do
+		if i ~= 1 then
+			local node = gui.get_node("rocket_"..i.."/price_text")
+			gui.set_text(node, v.price)
+		end
+	end
+	-- unlock rocket in loaded
+	for i, v in ipairs(unlocked_rocket) do
+		if v and i ~= 1 then
+			unlock_rocket(self, i, true)
+		end
+	end
+	selecting_rocket(self, curr_rocket, true)
+	-- unlock astropedia in loaded
+	for i, v in ipairs(unlocked_astro) do
+		local key
+		if v and i ~= 1 then
+			if i == 2 then
+				key = "satellite"
+			elseif i == 3 then
+				key = "moon"
+			elseif i == 4 then
+				key = "earth"
+			elseif i == 5 then
+				key = "rocket"
+			elseif i == 6 then
+				key = "sun"
+			end
+			unlock_astropedia(self, key)
+		end
+	end
 
 	self.play_btn = create_sprite_button(gui.get_node("start_btn"), "button_bermain", function()
 		self.btn_click_once = true
@@ -333,6 +422,7 @@ function on_message(self, message_id, message, sender)
 		msg.post(".", "acquire_input_focus")
 		print("HIGHSCORE:",highscore)
 		print("COINS:",coin_saved)
+		msg.post("loader:/go_loader#script", "save_game") -- saving game data
 		updating_coin(self)
 	end
 	-- from game.script

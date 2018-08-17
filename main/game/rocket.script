@@ -1,3 +1,4 @@
+local Urls = require "main.module.msg_url"
 go.property("speed", 0.02)
 local action_id_touch = hash("touch")
 
@@ -26,13 +27,13 @@ local function set_rot(self, action)
 end
 
 local function particle_control(enable)
-	local url = "#fire_trail" -- auto-handler
+	local url = Urls.my_url("#fire_trail") -- auto-handler
 	if curr_rocket == 2 then
-		url = "#fire2_trail"
+		url = Urls.my_url("#fire2_trail")
 	elseif curr_rocket == 3 then
-		url = "#fire3_trail"
+		url = Urls.my_url("#fire3_trail")
 	elseif curr_rocket == 4 then
-		url = "#fire4_trail"
+		url = Urls.my_url("#fire4_trail")
 	end
 	if enable then
 		particlefx.play(url)
@@ -73,14 +74,14 @@ function on_message(self, message_id, message, sender)
 			msg.post(message.other_id, "get_coin")
 		end
 		if message.group == hash("meteor") and not self.is_destroy then
-			print "rocket damaged!"
-			particlefx.stop("#fire_trail")
+			print "rocket destroy!"
+			particle_control(false)
 			particlefx.play("#rocket_destroy_fx")
 			self.is_destroy = true
 			msg.post("/go_game#script", "game_end")
 			msg.post(".", "release_input_focus")
 			go.animate("/go_rocket#sprite", "tint", go.PLAYBACK_ONCE_FORWARD, vmath.vector4(1, 1, 1, 0), go.EASING_LINEAR, 0.3)
-			go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, 0.5, function()
+			go.animate(".", "scale.z", go.PLAYBACK_ONCE_FORWARD, 1, go.EASING_LINEAR, 0.1, 0.75, function()
 				msg.post("/go_gameover#gameover", "show")
 			end)
 		end
@@ -90,10 +91,13 @@ function on_message(self, message_id, message, sender)
 			sprite.play_flipbook("#sprite", "ikon_roket")
 		elseif curr_rocket == 2 then
 			sprite.play_flipbook("#sprite", "roket2")
+			self.speed = self.speed + 0.02
 		elseif curr_rocket == 3 then
 			sprite.play_flipbook("#sprite", "roket3")
+			self.speed = self.speed + 0.04
 		elseif curr_rocket == 4 then
 			sprite.play_flipbook("#sprite", "roket4")
+			self.speed = self.speed + 0.08
 		end
 		print("rocket is set to", curr_rocket)
 	end

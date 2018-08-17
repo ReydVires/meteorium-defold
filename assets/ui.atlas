@@ -64,6 +64,9 @@ images {
 images {
   image: "/assets/sprites/trivia/judul_teks_trivia.png"
 }
+images {
+  image: "/assets/sprites/popup_achievment.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

@@ -5,8 +5,38 @@ coin_saved = 0 -- saved
 coin_collected = 0 -- current in-game
 astropedia_data = nil -- for storing data json (decoded)
 curr_rocket = 1 -- for rocket selected
-unlocked_rocket = {1, 0, 0, 0} -- unlocked rocket
+unlocked_rocket = {true, false, false, false} -- unlocked rocket
 unlocked_astro = {true, false, false, false, false, false} -- unlocked astropedia
+
+local filename = sys.get_save_file("meteorium", "gamedata")
+
+local function load_data()
+	local data_loaded = sys.load(filename, "gamedata")
+	pprint(data_loaded)
+	if not next(data_loaded) then
+		print "no gamedata loaded"
+	else
+		highscore = data_loaded.highscore
+		coin_saved = data_loaded.coin_saved
+		curr_rocket = data_loaded.curr_rocket
+		unlocked_rocket = data_loaded.unlocked_rocket
+		unlocked_astro = data_loaded.unlocked_astro
+		print "gamedata loaded"
+	end
+end
+
+local function save_gamedata()
+	local data_saved = {
+		highscore = highscore,
+		coin_saved = coin_saved,
+		curr_rocket = curr_rocket,
+		unlocked_rocket = unlocked_rocket,
+		unlocked_astro = unlocked_astro
+	}
+	sys.save(filename, data_saved)
+	pprint(data_saved)
+	print "saved new gamedata"
+end
 
 local PROX = "#proxy_"
 -- debug_json
@@ -37,19 +67,21 @@ end
 
 function init(self)
 	-- to make sure generate random number
-	--math.randomseed(socket.gettime())
-	-- debug_json
-	astropedia_data = json.decode(json_db)
-	for i=1,#astropedia_data do
-		pprint(astropedia_data[i].description)
-	end
-
 	math.randomseed(os.time())
+	load_data()
+	astropedia_data = json.decode(json_db)
+	--[[for i=1,#astropedia_data do
+		pprint(astropedia_data[i].description)
+	end]]
 	msg.post(".", "acquire_input_focus")
 	load_menu(self)
 end
 
 function on_message(self, message_id, message, sender)
+	-- from
+	if message_id == hash("save_game") then
+		save_gamedata()
+	end
 	-- from menu.gui_script
 	if message_id == hash("goto_game") then
 		enable_menu(self, false)

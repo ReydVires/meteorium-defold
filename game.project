@@ -1,6 +1,6 @@
 [project]
 title = Meteorium
-version = 0.3
+version = 0.4
 custom_resources = main/database
 
 [bootstrap]

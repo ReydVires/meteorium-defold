@@ -1,3 +1,9 @@
+local Button = require "main.module.gui_button"
+
+local function create_sprite_button(node, released_animation, callback)
+	return Button.create(node, callback, "sprite", hash(released_animation), hash(released_animation.."2"))
+end
+
 local function set_icon(self, icon_name)
 	local node = gui.get_node("icon_box")
 	if icon_name == "sun" then

@@ -92,6 +92,20 @@ local function create_meteor_everytick(self, dt, duration)
 	end
 end
 
+local function bg_moving(self, dt)
+	local bg1 = go.get_id("/go_bg")
+	local bg2 = go.get_id("/go_bg2")
+	local pos = go.get_position(bg1)
+	pos.y = pos.y - dt * 40 -- 20
+	go.set_position(pos, bg1)
+	pos.y = pos.y - 1
+	go.set_position(pos, bg2)
+	if go.get_position(bg1).y < -800 then
+		pos.y = 0
+		go.set_position(pos, bg1)
+	end
+end
+
 function init(self)
 	msg.post(".", "generate_coin")
 	print("GC: " .. collectgarbage("count") * 1024) -- on_debug
@@ -105,6 +119,7 @@ end
 
 function update(self, dt)
 	if not self.game_end then
+		bg_moving(self, dt)
 		score_everytick(self, dt, TIME_BASE)
 		create_meteor_everytick(self, dt, TIME_SPAWN)
 	end

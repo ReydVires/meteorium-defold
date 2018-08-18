@@ -83,7 +83,9 @@ local function random_size(self, min, max)
 	size_scale.y = val
 	go.set_scale(size_scale)
 	if val < 0.7 then
-		self.speed = self.speed + 10
+		self.speed = self.speed + 25
+	elseif val > 1.1 then
+		self.speed = self.speed - 20
 	end
 end
 

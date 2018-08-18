@@ -23,6 +23,8 @@ end
 local function set_highscore(self)
 	if score > highscore then
 		highscore = score
+		-- on_debug: unstable saving
+		--msg.post("loader:/go_loader#script", "save_game") -- saving game data
 		local text = gui.get_text(gui.get_node("detail_text")) .. " Baru!"
 		gui.set_text(gui.get_node("detail_text"), text)
 	end

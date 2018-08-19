@@ -1,5 +1,6 @@
 go.property("speed", 180)
 local ROTATION_SPEED = 2
+local meteor_idx = 0
 
 local function set_angle(self)
 	-- table store angle
@@ -57,11 +58,24 @@ local function moving(self, dt)
 	go.set_position(self.pos)
 end
 
+local function object_deleted()
+	--pprint(meteors_tab)
+	for i, v in ipairs(meteors_tab) do
+		-- removing data from table meteors_tab after applying pause/stop move
+		if v == go.get_id() then
+			--print("need to remove by force:",i,"",v)
+			table.remove(meteors_tab,i)
+			meteor_idx = meteor_idx - 1
+		end
+	end
+	go.delete()
+end
+
 local function destroy_area(self)
 	if self.pos.x > 505 or self.pos.x < -25 then
-		go.delete()
+		object_deleted()
 	elseif self.pos.y > 825 or self.pos.y < -25 then
-		go.delete()
+		object_deleted()
 	end
 end
 
@@ -111,17 +125,27 @@ function init(self)
 	random_size(self, 0.65, 1.2)
 
 	set_angle(self)
+	
+	meteor_idx = meteor_idx + 1 -- just tracing, how much meteor is created
+	self.idx = meteor_idx
+	table.insert(meteors_tab, self.idx, go.get_id())
 end
 
 function update(self, dt)
-	moving(self, dt)
+	if not self.game_paused then
+		moving(self, dt)
+		destroy_area(self)
+	end
 	rotating(self, dt)
-	destroy_area(self)
 end
 
 function on_message(self, message_id, message, sender)
 	-- from game.script
 	if message_id == hash("set_move_dir") then
 		self.pick_from = message.spawn_from
+	end
+	-- from game.script
+	if message_id == hash("game_pause") then
+		self.game_paused = message.is_pause
 	end
 end

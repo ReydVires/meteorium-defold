@@ -107,6 +107,7 @@ local function bg_moving(self, dt)
 end
 
 function init(self)
+	meteors_tab = {} -- cleaning data table from the latest game
 	msg.post(".", "generate_coin")
 	print("GC: " .. collectgarbage("count") * 1024) -- on_debug
 	-- set gameover.gui position
@@ -118,7 +119,7 @@ function init(self)
 end
 
 function update(self, dt)
-	if not self.game_end then
+	if not self.game_end and not self.game_paused then
 		bg_moving(self, dt)
 		score_everytick(self, dt, TIME_BASE)
 		create_meteor_everytick(self, dt, TIME_SPAWN)
@@ -129,10 +130,18 @@ function on_message(self, message_id, message, sender)
 	-- from rocket.script
 	if message_id == hash("game_end") then
 		self.game_end = true
+		msg.post("/go_game#game", "game_end", {is_game_end = self.game_end})
 	end
 	-- from coin.script, this script
 	if message_id == hash("generate_coin") then
 		generate_new_coin(self)
+	end
+	-- from menu.gui_script
+	if message_id == hash("game_pause") then
+		self.game_paused = message.is_pause
+		for i, v in ipairs(meteors_tab) do
+			msg.post(v, "game_pause", {is_pause = message.is_pause})
+		end
 	end
 	-- from this script
 	if message_id == hash("generate_meteor") then

@@ -5,12 +5,12 @@ local function create_sprite_button(node, released_animation, callback)
 end
 
 local function store_reset_data(self)
-	coin_saved = coin_saved + coin_collected
 	score = 0 -- reset score
 	coin_collected = 0 -- reset coin
 end
 
 local function updating_coin_collect(self)
+	coin_saved = coin_saved + coin_collected
 	local node = gui.get_node("coin_collect_text")
 	gui.set_text(node, coin_collected)
 end
@@ -23,8 +23,6 @@ end
 local function set_highscore(self)
 	if score > highscore then
 		highscore = score
-		-- on_debug: unstable saving
-		--msg.post("loader:/go_loader#script", "save_game") -- saving game data
 		local text = gui.get_text(gui.get_node("detail_text")) .. " Baru!"
 		gui.set_text(gui.get_node("detail_text"), text)
 	end
@@ -64,6 +62,12 @@ function on_message(self, message_id, message, sender)
 		local node = gui.get_node("bg")
 		gui.set_enabled(node, true)
 		msg.post(".", "acquire_input_focus")
+		msg.post("loader:/go_loader#script", "save_game") -- saving game data
+	end
+	-- from game.gui_script
+	if message_id == hash("reset_data") then
+		-- exit current game, make no save anything stats
+		store_reset_data(self)
 	end
 end
 

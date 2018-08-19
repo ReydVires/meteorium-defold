@@ -7,6 +7,7 @@ astropedia_data = nil -- for storing data json (decoded)
 curr_rocket = 1 -- for rocket selected
 unlocked_rocket = {true, false, false, false} -- unlocked rocket
 unlocked_astro = {true, false, false, false, false, false} -- unlocked astropedia
+meteors_tab = {} -- for tracking meteor that created
 
 local filename = sys.get_save_file("meteorium", "gamedata")
 

@@ -138,7 +138,7 @@ local function show_astro_panel(self, enable)
 	-- make position of object and panel properly in pop up
 	if enable then
 		set_info_astropedia(self)
-		pos_y = 415
+		pos_y = 400
 		ease = gui.EASING_OUTBACK
 		obj_pos.x = (box_pos.x + 240) * -1
 		obj_pos.y = screen_y

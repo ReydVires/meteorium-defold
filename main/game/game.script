@@ -115,6 +115,8 @@ function init(self)
 	local gameover_gui_pos = go.get_position(go.get_id("go_gameover"))
 	gameover_gui_pos.x = 0
 
+	msg.post("/go_game#fading", "do_fade_in")
+
 	reset_tick_score(self)
 	reset_tick_meteor(self)
 end

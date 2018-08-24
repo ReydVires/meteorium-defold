@@ -58,6 +58,7 @@ end
 local function enable_menu(self, enable)
 	if enable then
 		msg.post(PROX.."menu", "enable")
+		msg.post("menu:/go_menu#fading", "do_fade_in")
 		msg.post("menu:/go_menu", "on_enable")
 	else
 		msg.post(PROX.."menu", "disable")

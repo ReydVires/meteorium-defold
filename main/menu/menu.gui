@@ -157,7 +157,7 @@ nodes {
     w: 1.0
   }
   size {
-    x: 252.0
+    x: 250.0
     y: 79.0
     z: 0.0
     w: 1.0
@@ -212,8 +212,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }
@@ -267,8 +267,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }
@@ -322,8 +322,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }
@@ -2041,7 +2041,7 @@ nodes {
   }
   type: TYPE_TEXT
   blend_mode: BLEND_MODE_ALPHA
-  text: "PILIH ROKET"
+  text: "PILIH SKIN ROKET"
   font: "label"
   id: "title_rocket_text"
   xanchor: XANCHOR_NONE
@@ -3203,7 +3203,7 @@ nodes {
 }
 nodes {
   position {
-    x: 0.0
+    x: -191.0
     y: 139.0
     z: 0.0
     w: 1.0
@@ -3250,7 +3250,7 @@ nodes {
   id: "trivial_text"
   xanchor: XANCHOR_NONE
   yanchor: YANCHOR_NONE
-  pivot: PIVOT_N
+  pivot: PIVOT_NW
   outline {
     x: 1.0
     y: 1.0
@@ -3295,8 +3295,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }

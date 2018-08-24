@@ -1,3 +1,4 @@
+local Fps = require "main.module.fps"
 local action_id_back = hash("back")
 local action_id_esc = hash("esc")
 local TIME_BASE = 0.15
@@ -18,22 +19,22 @@ local function unlock_achivement(self)
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[2] = true
-	elseif score >= 550 and not unlocked_astro[3] then -- 450
+	elseif score >= 550 and not unlocked_astro[3] then -- 550
 		data_unlocked = "moon"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[3] = true
-	elseif score >= 750 and not unlocked_astro[4] then -- 700
+	elseif score >= 750 and not unlocked_astro[4] then -- 750
 		data_unlocked = "earth"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[4] = true
-	elseif score >= 950 and not unlocked_astro[5] then -- 900
+	elseif score >= 950 and not unlocked_astro[5] then -- 950
 		data_unlocked = "rocket"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[5] = true
-	elseif score >= 1250 and not unlocked_astro[6] then -- 1200
+	elseif score >= 1250 and not unlocked_astro[6] then -- 1250
 		data_unlocked = "sun"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
@@ -124,6 +125,9 @@ function update(self, dt)
 		score_everytick(self, dt, TIME_BASE)
 		create_meteor_everytick(self, dt, TIME_SPAWN)
 	end
+	Fps.update(dt)
+	local fps_print = Fps.average_ms.." ms | "..Fps.fps.." FPS"
+	msg.post("@render:", "draw_text", { text = fps_print, position = vmath.vector3(10, 50, 0) } )
 end
 
 function on_message(self, message_id, message, sender)

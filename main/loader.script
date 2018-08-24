@@ -43,6 +43,14 @@ local PROX = "#proxy_"
 -- debug_json
 local json_db = sys.load_resource("/main/database/astropedia_db.json")
 
+local function load_splash_screen()
+	msg.post(PROX.."splash", "load")
+end
+
+local function unload_splash_screen()
+	msg.post(PROX.."splash", "unload")
+end
+
 local function load_menu(self)
 	msg.post(PROX.."menu", "load")
 end
@@ -75,11 +83,17 @@ function init(self)
 		pprint(astropedia_data[i].description)
 	end]]
 	msg.post(".", "acquire_input_focus")
-	load_menu(self)
+	--load_menu(self)
+	load_splash_screen()
 end
 
 function on_message(self, message_id, message, sender)
-	-- from
+	if message_id == hash("goto_menu_via_splash") then
+		print "come menu"
+		unload_splash_screen()
+		load_menu(self)
+	end
+	-- from gameover.gui_script
 	if message_id == hash("save_game") then
 		save_gamedata()
 	end

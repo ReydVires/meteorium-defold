@@ -39,7 +39,8 @@ local function menu_state(self)
 		self.btn_click_once = false
 		msg.post(".", "release_input_focus")
 		-- on_debug check module
-		msg.post(Urls.my_url("loader:/go_loader#script"), self.curr_menu_state)
+		--msg.post(Urls.my_url("loader:/go_loader#script"), self.curr_menu_state)
+		msg.post("menu:/go_menu#fading", "do_fade_out_imm", {screen = "goto_game"})
 	elseif self.curr_menu_state == "goto_close_help" then
 		local node = gui.get_node("help_panel")
 		gui.animate(node, "scale", vmath.vector3(0.4,0.4,1), gui.EASING_INBACK, 0.2, 0, function()

@@ -125,9 +125,12 @@ function update(self, dt)
 		score_everytick(self, dt, TIME_BASE)
 		create_meteor_everytick(self, dt, TIME_SPAWN)
 	end
-	Fps.update(dt)
-	local fps_print = Fps.average_ms.." ms | "..Fps.fps.." FPS"
-	msg.post("@render:", "draw_text", { text = fps_print, position = vmath.vector3(10, 50, 0) } )
+	-- just in debug
+	if sys.get_engine_info().is_debug then
+		Fps.update(dt)
+		local fps_print = Fps.average_ms.." ms | "..Fps.fps.." FPS"
+		msg.post("@render:", "draw_text", { text = fps_print, position = vmath.vector3(10, 50, 0) } )
+	end
 end
 
 function on_message(self, message_id, message, sender)

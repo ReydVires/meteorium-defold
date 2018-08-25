@@ -425,7 +425,7 @@ function init(self)
 		menu_state(self)
 	end)
 
-	self.confirm_btn = create_sprite_button(gui.get_node("confirm_btn"), "button_astropedia", function()
+	self.confirm_btn = create_sprite_button(gui.get_node("confirm_btn"), "button_kembali", function()
 		self.btn_click_once = true
 		show_astro_panel(self, false)
 	end)
@@ -471,7 +471,7 @@ function on_input(self, action_id, action)
 			-- can quit if only if in goto_menu state
 			print "quit game"
 			msg.post("@system:", "exit", {code = 0})
-		else
+		elseif action_id ~= hash("esc") and action_id ~= hash("back") then
 			if not self.panel_open then
 				self.to_menu_btn2.on_input(action_id, action)
 				buttons_astropedia(self, action_id, action)
@@ -485,7 +485,8 @@ function on_input(self, action_id, action)
 			self.credit_btn.on_input(action_id, action)
 		end
 	end
-	if (self.curr_menu_state ~= "goto_help" or self.curr_menu_state ~= "goto_close_help") then
+	if (self.curr_menu_state ~= "goto_help" or self.curr_menu_state ~= "goto_close_help") and
+	action_id ~= hash("esc") and action_id ~= hash("back") then
 		self.help_btn.on_input(action_id, action)
 	end
 end

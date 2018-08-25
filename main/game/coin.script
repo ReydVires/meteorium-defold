@@ -10,7 +10,7 @@ function init(self)
 	--print "coin created"
 	self.value = 0
 	random_coin_texture(self)
-	sprite.set_constant("#sprite", "tint", vmath.vector4(0.85, 0.8, 0.1, 1))
+	--sprite.set_constant("#sprite", "tint", vmath.vector4(0.85, 0.8, 0.1, 1))
 	msg.post("#", "set_coin_val", {amount = 1})
 	local pos = go.get_position()
 	go.animate(go.get_id(), "position.y", go.PLAYBACK_LOOP_PINGPONG, pos.y + 5, go.EASING_OUTBOUNCE, 0.6)
@@ -31,7 +31,6 @@ function on_message(self, message_id, message, sender)
 	end
 	-- from this script
 	if message_id == hash("set_coin_val") then
-		--print "coin value is set"
 		self.value = message.amount
 	end
 end

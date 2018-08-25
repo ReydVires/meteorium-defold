@@ -14,27 +14,27 @@ end
 
 local function unlock_achivement(self)
 	local data_unlocked
-	if score >= 300 and not unlocked_astro[2] then -- 300
+	if score >= 350 and not unlocked_astro[2] then -- 300
 		data_unlocked = "satellite"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[2] = true
-	elseif score >= 550 and not unlocked_astro[3] then -- 550
+	elseif score >= 600 and not unlocked_astro[3] then -- 550
 		data_unlocked = "moon"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[3] = true
-	elseif score >= 750 and not unlocked_astro[4] then -- 750
+	elseif score >= 850 and not unlocked_astro[4] then -- 750
 		data_unlocked = "earth"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[4] = true
-	elseif score >= 950 and not unlocked_astro[5] then -- 950
+	elseif score >= 1000 and not unlocked_astro[5] then -- 950
 		data_unlocked = "rocket"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})
 		unlocked_astro[5] = true
-	elseif score >= 1250 and not unlocked_astro[6] then -- 1250
+	elseif score >= 1500 and not unlocked_astro[6] then -- 1250
 		data_unlocked = "sun"
 		msg.post("menu:/go_menu#menu", "unlock_astropedia", { unlocked = data_unlocked})
 		msg.post("/go_game#game", "achivement_update", {data = data_unlocked})

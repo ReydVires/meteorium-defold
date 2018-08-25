@@ -1973,8 +1973,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }
@@ -3048,8 +3048,8 @@ nodes {
     w: 1.0
   }
   size {
-    x: 208.0
-    y: 65.0
+    x: 250.0
+    y: 79.0
     z: 0.0
     w: 1.0
   }
@@ -3308,7 +3308,7 @@ nodes {
   }
   type: TYPE_BOX
   blend_mode: BLEND_MODE_ALPHA
-  texture: "ui/button_astropedia"
+  texture: "ui/button_kembali"
   id: "confirm_btn"
   xanchor: XANCHOR_NONE
   yanchor: YANCHOR_NONE

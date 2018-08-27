@@ -244,7 +244,7 @@ end
 
 local function unlock_rocket(self, num_rocket_unlocked, init)
 	if not self.rockets[num_rocket_unlocked].is_sold then
-		
+
 		self.rockets[num_rocket_unlocked].is_sold = true
 		local node = gui.get_node("rocket_"..num_rocket_unlocked.."/price_btn")
 		gui.play_flipbook(node, "button_pilih")
@@ -351,13 +351,46 @@ local function init_rocket_market(self)
 		}
 	}
 end
+-- on_debug: need to improve implementation
+local function swipe_back(self, action)
+	if action.pressed then
+		self.start_capture = true
+		self.startX = action.x
+		self.currX = action.x
+	end
+	if self.start_capture then
+		print("boommm")
+		self.currX = action.x
+	end
+	if self.curr_menu_state == "goto_astropedia" then
+		if action.released then
+			self.start_capture = false
+			if (self.currX - self.startX < -25) then
+				self.btn_click_once = true
+				self.curr_menu_state = "goto_menu_via_astro"
+				menu_state(self)
+			end
+		end
+	end
+	if self.curr_menu_state == "goto_choose_rocket" then
+		if action.released then
+			self.start_capture = false
+			if (self.currX - self.startX > 25) then
+				self.btn_click_once = true
+				self.curr_menu_state = "goto_menu_via_choose_rocket"
+				menu_state(self)
+			end
+		end
+	end
+end
 
 function init(self)
 	-- acquire_input_focus in handling with fade in
 	msg.post("menu:/go_menu#fading", "do_fade_in")
-	
+
 	updating_coin(self)
 	print "from init menu"
+	self.start_capture = false
 	self.curr_menu_state = "goto_menu" -- just init to make back or esc key works
 	self.btn_click_once = false -- make sure it clicked once
 	self.panel_open = false -- initialization for panel astropedia
@@ -465,6 +498,7 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
+	swipe_back(self, action)
 	if not self.btn_click_once then
 		if (action_id == hash("back") or action_id == hash("esc")) and
 		action.pressed and string.sub(self.curr_menu_state, 1, 9) == "goto_menu" then

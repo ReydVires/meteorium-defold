@@ -16,6 +16,9 @@ images {
 images {
   image: "/assets/sprites/yell_fx.png"
 }
+images {
+  image: "/assets/sprites/bintang2.png"
+}
 margin: 2
 extrude_borders: 0
 inner_padding: 0

@@ -359,7 +359,6 @@ local function swipe_back(self, action)
 		self.currX = action.x
 	end
 	if self.start_capture then
-		print("boommm")
 		self.currX = action.x
 	end
 	if self.curr_menu_state == "goto_astropedia" then
